@@ -6,6 +6,18 @@ compatibility_date = "2026-10-01"
 [triggers]
 crons = ["* * * * *"]
 
+# 数据库二选一：
+#
+# 方案 A（推荐）：Turso
+#   1. 在 https://turso.tech 注册建库
+#   2. 在 Cloudflare Dashboard > Workers > probe > Settings > Variables 添加 Secrets：
+#      TURSO_URL=https://xxx.turso.io
+#      TURSO_TOKEN=xxx
+#   3. 下面的 D1 配置保留即可（代码无 Turso 时自动回退 D1，有 Turso 时忽略）
+#
+# 方案 B：D1
+#   取消注释并填入你的 database_id，不设 TURSO_URL/TURSO_TOKEN 即用 D1
+#
 [[d1_databases]]
 binding = "DB"
 database_name = "probe-db"
