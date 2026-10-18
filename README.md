@@ -2,17 +2,17 @@
 
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-orange)
-![D1](https://img.shields.io/badge/Database-D1-blue)
+![Turso](https://img.shields.io/badge/Database-Turso-blue)
 ![No Dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen)
 
-跑在 Cloudflare Workers + D1 上的服务器/网站监控站。零依赖后端，前端纯原生 JS，支持 HTTP/TCP/SSL/服务器 Agent 四种监控类型，11 种告警渠道。
+跑在 Cloudflare Workers + Turso 上的服务器/网站监控站。零依赖后端，前端纯原生 JS，支持 HTTP/TCP/HTTPS/服务器 Agent 四种监控类型，11 种告警渠道。
 
 ## ✨ 功能
 
 **监控类型**
 - 🌐 HTTP/HTTPS：状态码 + 关键词匹配检测
 - 🔌 TCP 端口：host:port 连通性检测（需 Workers 付费版）
-- 🔒 SSL：域名证书有效性检测，剩 7 天告警
+- 🔒 HTTPS：HTTPS 连通性检测（注意：不验证证书详情，证书到期检查请用 Agent）
 - 🖥️ 服务器 Agent：Python 脚本上报 CPU/内存/磁盘/负载/三网延迟
 
 **Agent 高级能力**
@@ -20,7 +20,8 @@
 - 可疑进程告警（挖矿特征）
 - DDoS/CC 症状检测（连接数/SYN）
 - 一键断网/恢复（iptables 隔离）
-- 进程存活监控、SSL 证书到期检查
+- 进程存活监控
+- **SSL 证书到期检查**：在 Agent 监控里配置域名（逗号分隔，支持多个），Agent 用 openssl 检查每个域名的证书剩余天数，详情页显示列表，7 天内告警
 
 **告警渠道（11 种，可多选）**
 - Telegram、邮件（Resend）、Webhook、钉钉、Bark、企业微信
@@ -42,19 +43,21 @@
 
 ## 🛠️ 手动部署
 
-1. 创建 D1 数据库，执行 `migrations/` 下的 SQL（按文件名顺序）
-2. 修改 `wrangler.toml` 填入你的 `database_id`
-3. 构建并部署：
+1. 在 [Turso](https://turso.tech) 注册并创建数据库
+2. 执行 `migrations/` 下的 SQL（按文件名顺序，001-017）
+3. 在 Cloudflare Workers 后台设置 Secrets：`TURSO_URL`（https 形式的数据库 URL）和 `TURSO_TOKEN`
+4. 构建并部署：
 
 ```bash
 node build.js
 npx wrangler deploy
 ```
 
-4. 设置 Cron 触发器（每分钟）：`wrangler.toml` 已配好 `* * * * *`
-5. 首次访问后台按提示设置管理员密码（≥10 位）
+5. 设置 Cron 触发器（每分钟）：`wrangler.toml` 已配好 `* * * * *`
+6. 首次访问后台按提示设置管理员密码（≥10 位）
 
 > 也可直接调 Cloudflare API 上传 `dist/index.js`（详见源码注释）。
+> 注意：无 TURSO_URL/TURSO_TOKEN 时会自动回退到 D1（需在 wrangler.toml 配置 database_id）。
 
 ## 🖥️ 服务器 Agent 部署
 
@@ -68,7 +71,7 @@ npx wrangler deploy
 │   ├── app.html     # 前端（状态页 + 管理后台，单文件）
 │   └── smtp.js      # SMTP 直发模块
 ├── agent.py         # 服务器监控脚本（纯标准库）
-├── migrations/     # D1 数据库迁移
+├── migrations/     # 数据库迁移（001-017，Turso/SQLite 兼容）
 ├── build.js         # 构建脚本（内联打包）
 └── wrangler.toml   # Workers 配置模板
 ```
