@@ -1,0 +1,12 @@
+name = "probe"
+main = "dist/index.js"
+compatibility_date = "2026-10-01"
+
+# Cron 每分钟触发，Worker 内部按各监控的频率决定是否检测
+[triggers]
+crons = ["* * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "probe-db"
+database_id = "REPLACE_WITH_YOUR_D1_ID"
