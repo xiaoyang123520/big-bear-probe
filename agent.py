@@ -381,6 +381,7 @@ def main():
     proc_status, suspect_procs = check_processes()
     # SSL 证书检查：域名列表服务端下发（存在临时文件里）
     ssl_days, ssl_domain = None, ""
+    ssl_list = []  # 所有域名的证书状态 [{domain, days}]
     try:
         domains = []
         try:
@@ -393,8 +394,10 @@ def main():
             if not d:
                 continue
             days = check_ssl_cert(d)
-            if days is not None and (ssl_days is None or days < ssl_days):
-                ssl_days, ssl_domain = days, d
+            if days is not None:
+                ssl_list.append({"domain": d, "days": days})
+                if ssl_days is None or days < ssl_days:
+                    ssl_days, ssl_domain = days, d
     except Exception:
         pass
     ts = int(time.time())
@@ -420,6 +423,7 @@ def main():
         "suspect_procs": suspect_procs,
         "ssl_days": ssl_days,
         "ssl_domain": ssl_domain,
+        "ssl_list": ssl_list,
         "net_isolated": 1 if is_isolated() else 0,
     }).encode()
     req = urllib.request.Request(
