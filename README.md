@@ -38,6 +38,8 @@
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xiaoyang123520/big-bear-probe)
 
+在线演示：https://probe.helloxy.xyz
+
 ## 🛠️ 手动部署
 
 1. 创建 D1 数据库，执行 `migrations/` 下的 SQL（按文件名顺序）
