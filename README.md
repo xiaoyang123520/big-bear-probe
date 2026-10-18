@@ -46,7 +46,12 @@
 ### 方案 A：Turso（推荐）
 
 1. 在 [Turso](https://turso.tech) 注册并创建数据库
-2. 执行 `migrations/` 下的 SQL（按文件名顺序，001-017）
+2. 执行 `migrations/` 下的 SQL（按文件名顺序，001-017）：
+```bash
+# 安装 Turso CLI 后逐个执行
+for f in migrations/*.sql; do turso db shell <你的数据库名> < "$f"; done
+```
+   或在 Turso Dashboard 的 SQL 编辑器里逐个粘贴执行
 3. 在 Cloudflare Dashboard → Workers → probe → Settings → Variables 添加 Secrets：
    - `TURSO_URL`=https://xxx.turso.io（注意用 https 不是 libsql://）
    - `TURSO_TOKEN`=xxx
