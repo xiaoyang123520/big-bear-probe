@@ -118,9 +118,10 @@ headers: { "User-Agent": "ProbeBot/1.0"}
 });
 clearTimeout(timer);
 const ms = Date.now() - t0;
-// 状态码检查
-if (m.expected_status && resp.status!== m.expected_status) {
-return { status: "down", ms, detail: `状态码 ${resp.status}，期望 ${m.expected_status}`};
+// 状态码检查（转数字再比，避免字符串 "200" !== 数字 200）
+const expected = parseInt(m.expected_status, 10) || 0;
+if (expected && resp.status !== expected) {
+return { status: "down", ms, detail: `状态码 ${resp.status}，期望 ${expected}`};
 }
 // 关键词检查（只读前 1MB，防止大文件打爆内存）
 if (m.keyword) {
@@ -502,12 +503,31 @@ content: { text: `${title}\n🖥️ ${m.name}\n${detail}\n⏰ ${new Date().toLoc
 async function sendAlerts(db, m, kind, result) {
 const emoji = kind === "down"? "🔴": "🟢";
 const action = kind === "down"? "宕机": "恢复";
-// Agent 类型：target 可能为空，用 name 兜底；恢复时显示资源信息而非 0ms
-const targetLine = m.type === "agent" ? "" : `\n目标：${m.target}`;
-const detailLine = kind === "down"
-  ? "\n原因：" + result.detail
-  : (m.type === "agent" ? "\n" + result.detail : "\n耗时：" + result.ms + "ms");
-const text = `${emoji}${action}\n监控：${m.name}${targetLine}${detailLine}\n时间：${new Date().toLocaleString("zh-CN", { timeZone: "Asia/Shanghai"})}`;
+// 监控类型中文名
+const typeName = m.type === "http" ? "网站监控" : m.type === "ssl" ? "SSL证书" : m.type === "tcp" ? "TCP端口" : m.type === "agent" ? "服务器" : m.type;
+// Agent 类型：target 可能为空
+const targetLine = m.type === "agent" ? "" : `\n🎯 目标：${m.target}`;
+let detailLine = "";
+let extraLine = "";
+if (kind === "down") {
+  detailLine = "\n❌ 原因：" + result.detail;
+  // 连续失败次数
+  const fails = (m.consecutive_failures || 0) + 1;
+  extraLine = `\n🔢 连续失败：第 ${fails} 次`;
+  // 检查频率
+  extraLine += `\n⏱️ 检测频率：每 ${m.interval_minutes || 5} 分钟`;
+} else {
+  // 恢复：查故障持续时间
+  const inc = await db.prepare(`SELECT started_at, fail_count FROM incidents WHERE monitor_id=? ORDER BY started_at DESC LIMIT 1`).bind(m.id).first();
+  if (inc && inc.started_at) {
+    const mins = Math.max(1, Math.round((now() - inc.started_at) / 60));
+    const durStr = mins >= 60 ? `${Math.floor(mins/60)}小时${mins%60}分钟` : `${mins}分钟`;
+    extraLine = `\n⏳ 故障持续：${durStr}`;
+    if (inc.fail_count) extraLine += `\n🔢 累计失败：${inc.fail_count} 次`;
+  }
+  detailLine = m.type === "agent" ? "\n" + result.detail : "\n✅ 耗时：" + result.ms + "ms";
+}
+const text = `${emoji}${action}【${typeName}】\n📡 监控：${m.name}${targetLine}${detailLine}${extraLine}\n🕐 时间：${new Date().toLocaleString("zh-CN", { timeZone: "Asia/Shanghai"})}`;
 
 // Telegram
 if (m.alert_telegram) {
@@ -1127,6 +1147,9 @@ return json({ monitors: r.results || [], channels: cfg });
 }
 if (path === "/api/admin/monitors" && method === "POST") {
 const b = await req.json();
+// 后端非空校验（防绕过前端直接调 API）
+if (!b.name || !String(b.name).trim()) return json({ error: "名称不能为空" }, 400);
+if (b.type !== "agent" && (!b.target || !String(b.target).trim())) return json({ error: "目标不能为空" }, 400);
 // agent 类型自动生成 token
 const agentToken = b.type === "agent" ? [...crypto.getRandomValues(new Uint8Array(16))].map(x => x.toString(16).padStart(2, "0")).join("") : "";
 const r = await db.prepare(
@@ -1145,6 +1168,9 @@ return json({ id: r.meta.last_row_id, agent_token: agentToken || undefined });
 const mm = path.match(/^\/api\/admin\/monitors\/(\d+)$/);
 if (mm && method === "PUT") {
 const b = await req.json();
+// 后端非空校验（防绕过前端直接调 API）
+if (!b.name || !String(b.name).trim()) return json({ error: "名称不能为空" }, 400);
+if (b.type !== "agent" && (!b.target || !String(b.target).trim())) return json({ error: "目标不能为空" }, 400);
 await db.prepare(
 `UPDATE monitors SET name=?,type=?,target=?,interval_minutes=?,group_name=?,keyword=?,expected_status=?,enabled=?,alert_telegram=?,alert_email=?,alert_webhook=?,webhook_url=?,alert_dingtalk=?,alert_bark=?,alert_wecom=?,alert_custom_email=?,alert_smtp=?,alert_serverchan=?,alert_wxpusher=?,alert_feishu=?,cpu_threshold=?,mem_threshold=?,disk_threshold=?,ssh_threshold=?,conn_threshold=?,process_watch=?,ssl_domains=?,expire_at=? WHERE id=?`
 ).bind(b.name, b.type, b.target, b.interval_minutes, b.group_name || "", b.keyword || "", b.expected_status?? 200,
