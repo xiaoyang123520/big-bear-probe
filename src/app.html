@@ -221,7 +221,7 @@ zh: {
   dashboard: "监控管理", monitorsN: n => `${n} 个监控`, enabledN: n => `${n} 个启用中`,
   addMonitor: "+ 添加监控", maintenance: "🛠️ 计划维护", alertSettings: "⚙️ 告警设置", preview: "👁️ 预览", logout: "退出",
   name: "名称", type: "类型", target: "目标", freq: "频率", alert: "告警", statusCol: "状态", ops: "操作",
-  test: "测试", edit: "编辑", del: "删", more: "更多", deploy: "📥 部署", confirmDel: "确定删除？该监控的所有历史数据也会被删除。",
+  test: "测试", edit: "编辑", del: "删", more: "更多", deploy: "部署", confirmDel: "确定删除？该监控的所有历史数据也会被删除。",
   editMonitor: "✏️ 编辑", addMonitorTitle: "➕ 添加", monitorName: "名称 *", namePh: "如：我的博客",
   typeHttp: "🌐 HTTP/HTTPS", typeTcp: "🔌 TCP 端口（需 Workers 付费版）", typeSsl: "🔒 SSL (443)", typeAgent: "🖥️ 服务器 Agent（CPU/内存/磁盘）",
   agentTip: "Agent 类型：在服务器上运行上报脚本即可。保存后会生成 <b>Agent Token</b>，把 token 填进脚本配置里。",
@@ -314,7 +314,7 @@ en: {
   dashboard: "Monitors", monitorsN: n => `${n} monitors`, enabledN: n => `${n} enabled`,
   addMonitor: "+ Add Monitor", maintenance: "🛠️ Maintenance", alertSettings: "⚙️ Alert Settings", preview: "👁️ Preview", logout: "Logout",
   name: "Name", type: "Type", target: "Target", freq: "Interval", alert: "Alerts", statusCol: "Status", ops: "Actions",
-  test: "Test", edit: "Edit", del: "Delete", more: "More", deploy: "📥 Deploy", confirmDel: "Delete? All history will be removed.",
+  test: "Test", edit: "Edit", del: "Delete", more: "More", deploy: "Deploy", confirmDel: "Delete? All history will be removed.",
   editMonitor: "✏️ Edit", addMonitorTitle: "➕ Add", monitorName: "Name *", namePh: "e.g. My Blog",
   typeHttp: "🌐 HTTP/HTTPS", typeTcp: "🔌 TCP Port (Workers Paid)", typeSsl: "🔒 SSL (443)", typeAgent: "🖥️ Server Agent (CPU/Mem/Disk)",
   agentTip: "Agent type: run the report script on your server. An <b>Agent Token</b> will be generated after saving.",
@@ -755,12 +755,15 @@ async function showDashboard() {
   currentView = "admin";
   $("#app").innerHTML = `<div class="card" style="text-align:center;color:var(--muted)">加载中…</div>`;
   try {
-    const { monitors } = await api("/api/admin/monitors");
+    const { monitors, channels } = await api("/api/admin/monitors");
     monitorsCache = monitors;
+    const ch = channels || {};
     let rows = "";
     for (const m of monitors) {
       const dot = m.last_status === "up" ? "up" : m.last_status === "down" ? "down" : "unknown";
-      const alerts = [m.alert_telegram ? "TG" : "", m.alert_email ? "📧" : "", m.alert_webhook ? "WH" : "", m.alert_dingtalk ? "Ding" : "", m.alert_bark ? "Bark" : "", m.alert_wecom ? "WeCom" : "", m.alert_custom_email ? "Mail" : "", m.alert_smtp ? "SMTP" : "", m.alert_serverchan ? "SChan" : "", m.alert_wxpusher ? "WxP" : "", m.alert_feishu ? "FeiShu" : ""].filter(Boolean).join(" ");
+      // 只显示已全局配置的渠道，没配的摆出来也没用
+      const alertList = [["TG", m.alert_telegram && ch.telegram], ["Mail", m.alert_email && ch.email], ["WH", m.alert_webhook && m.webhook_url], ["Ding", m.alert_dingtalk && ch.dingtalk], ["Bark", m.alert_bark && ch.bark], ["WeCom", m.alert_wecom && ch.wecom], ["CMail", m.alert_custom_email && ch.custom_email], ["SMTP", m.alert_smtp && ch.smtp], ["SChan", m.alert_serverchan && ch.serverchan], ["WxP", m.alert_wxpusher && ch.wxpusher], ["FeiShu", m.alert_feishu && ch.feishu]].filter(([, on]) => on).map(([n]) => n);
+      const alerts = alertList.length ? `<span style="display:inline-flex;flex-wrap:wrap;gap:4px">${alertList.map(n => `<span style="background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.25);color:#93c5fd;padding:1px 7px;border-radius:20px;font-size:11px;white-space:nowrap">${n}</span>`).join("")}</span>` : "–";
       rows += `<tr><td><span class="dot ${dot}"></span> ${esc(m.name)}</td>
         <td><span style="background:var(--bg);padding:2px 8px;border-radius:6px;font-size:12px">${m.type}</span></td>
         <td style="font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.target)}</td>
@@ -772,7 +775,7 @@ async function showDashboard() {
           <div class="dropdown-menu" id="dd-${m.id}">
             <div style="padding:8px 12px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--border);margin-bottom:4px">
               <div style="font-weight:600;color:var(--text);font-size:13px;margin-bottom:2px">${esc(m.name)}</div>
-              <div>${m.type === "ssl" ? "🔒 SSL 证书监控" : m.type === "http" ? "🌐 HTTP 监控" : m.type === "tcp" ? "🔌 TCP 监控" : "🖥️ Agent 监控"} · ${esc(m.target)}</div>
+              <div>${m.type === "ssl" ? "🔒 SSL 证书监控" : m.type === "http" ? "🌐 HTTP 监控" : m.type === "tcp" ? "🔌 TCP 监控" : "🖥️ Agent 监控"}${m.target ? ` · ${esc(m.target)}` : ""}</div>
               ${m.type === "ssl" ? `<div style="margin-top:4px">💡 证书剩 7 天开始告警</div>` : ""}
             </div>
             ${m.type === "agent" ? `<button class="dd-item" onclick="showAgentGuide(${m.id},'${m.agent_token || ""}','${esc(m.name).replace(/'/g, "\\'")}')"><span class="dd-icon">📥</span>${tt("deploy")}</button>` : ""}
@@ -780,7 +783,7 @@ async function showDashboard() {
               ? `<button class="dd-item" onclick="toggleIsolate(${m.id},0,'${esc(m.name).replace(/'/g, "\\'")}')"><span class="dd-icon">🔌</span>${lang === "zh" ? "恢复网络" : "Restore"}</button>`
               : `<button class="dd-item dd-danger" onclick="toggleIsolate(${m.id},1,'${esc(m.name).replace(/'/g, "\\'")}')"><span class="dd-icon">⛔</span>${lang === "zh" ? "断网" : "Isolate"}</button>`) : ""}
             ${m.type === "agent" ? `<div class="dd-divider"></div>` : ""}
-            <button class="dd-item" onclick="testMonitor(event, ${m.id})"><span class="dd-icon">🧪</span>${tt("test")}</button>
+            ${m.type !== "agent" ? `<button class="dd-item" onclick="testMonitor(event, ${m.id})"><span class="dd-icon">🧪</span>${tt("test")}</button>` : ""}
             <button class="dd-item" onclick="editMonitor(${m.id})"><span class="dd-icon">✏️</span>${tt("edit")}</button>
             <div class="dd-divider"></div>
             <button class="dd-item dd-danger" onclick="delMonitor(${m.id})"><span class="dd-icon">🗑️</span>${tt("del")}</button>
@@ -851,8 +854,7 @@ async function editMonitor(id) {
         <div><label>🌐 TCP 连接数阈值（0=不告警）</label><input id="f-conn" type="number" min="0" max="100000" value="${m.conn_threshold || 0}" placeholder="5000"></div>
         <div><label>🔍 关键进程监控（逗号分隔）</label><input id="f-procs" type="text" value="${esc(m.process_watch || "")}" placeholder="nginx,docker,mysql"></div>
       </div>
-      <div style="margin-top:8px"><label>🔒 SSL 证书检查域名（逗号分隔，留空不检查）</label><input id="f-ssldom" type="text" value="${esc(m.ssl_domains || "")}" placeholder="example.com,api.example.com"></div>
-      <p style="color:var(--muted);font-size:12px;margin-top:6px">💡 连接数突增可能是 CC 攻击；关键进程停止会立即告警；SSL 证书剩 7 天开始提醒</p>
+      <p style="color:var(--muted);font-size:12px;margin-top:6px">💡 连接数突增可能是 CC 攻击；关键进程停止会立即告警</p>
     </div>
     <label>${tt("alertMethod")}</label><div class="checkbox-row">
       <label><input type="checkbox" id="f-tg"${m.alert_telegram ? " checked" : ""}> ${tt("tg")}</label>
@@ -941,7 +943,16 @@ function toggleDropdown(event, id) {
   const isOpen = menu.style.display !== "none";
   // 先关掉所有
   document.querySelectorAll(".dropdown-menu").forEach(m => m.style.display = "none");
-  menu.style.display = isOpen ? "none" : "block";
+  if (!isOpen) {
+    // 用 fixed 定位脱离 overflow 容器，避免被表格的横向滚动夹出滚动条
+    const btn = event.currentTarget;
+    const r = btn.getBoundingClientRect();
+    menu.style.position = "fixed";
+    menu.style.top = (r.bottom + 6) + "px";
+    menu.style.right = (window.innerWidth - r.right) + "px";
+    menu.style.left = "auto";
+    menu.style.display = "block";
+  }
 }
 // 点其他地方关闭下拉菜单
 document.addEventListener("click", () => {
@@ -1351,8 +1362,8 @@ async function testAlert(channel, btn) {
     // 先静默保存当前表单配置，再测试（避免测的是旧配置）
     const b = {
       site_title: $("#s-title").value.trim(), site_subtitle: $("#s-subtitle").value.trim(),
-      telegram_bot_token: $("#s-tg").value.trim(), telegram_chat_id: $("#s-tgid").value.trim(),
-      resend_api_key: $("#s-rk").value.trim(), alert_email_from: $("#s-from").value.trim(),
+      telegram_bot_token: $("#s-tg").value.trim(), telegram_chat_id: $("#s-tgc").value.trim(),
+      resend_api_key: $("#s-re").value.trim(), alert_email_from: $("#s-from").value.trim(),
       alert_email_to: $("#s-to").value.trim(),
       dingtalk_webhook: $("#s-ding").value.trim(), bark_url: $("#s-bark").value.trim(),
       wecom_webhook: $("#s-wecom").value.trim(),
