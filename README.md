@@ -43,21 +43,29 @@
 
 ## 🛠️ 手动部署
 
+### 方案 A：Turso（推荐）
+
 1. 在 [Turso](https://turso.tech) 注册并创建数据库
 2. 执行 `migrations/` 下的 SQL（按文件名顺序，001-017）
-3. 在 Cloudflare Workers 后台设置 Secrets：`TURSO_URL`（https 形式的数据库 URL）和 `TURSO_TOKEN`
+3. 在 Cloudflare Dashboard → Workers → probe → Settings → Variables 添加 Secrets：
+   - `TURSO_URL`=https://xxx.turso.io（注意用 https 不是 libsql://）
+   - `TURSO_TOKEN`=xxx
 4. 构建并部署：
-
 ```bash
 node build.js
 npx wrangler deploy
 ```
-
 5. 设置 Cron 触发器（每分钟）：`wrangler.toml` 已配好 `* * * * *`
 6. 首次访问后台按提示设置管理员密码（≥10 位）
 
+### 方案 B：D1
+
+1. 在 Cloudflare Dashboard 创建 D1 数据库，记下 database_id
+2. 执行 `migrations/` 下的 SQL（按文件名顺序，001-017）
+3. 修改 `wrangler.toml` 填入你的 `database_id`
+4. 构建并部署（同上，不设置 TURSO_URL/TURSO_TOKEN 即自动用 D1）
+
 > 也可直接调 Cloudflare API 上传 `dist/index.js`（详见源码注释）。
-> 注意：无 TURSO_URL/TURSO_TOKEN 时会自动回退到 D1（需在 wrangler.toml 配置 database_id）。
 
 ## 🖥️ 服务器 Agent 部署
 
