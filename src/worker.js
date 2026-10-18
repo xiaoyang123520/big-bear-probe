@@ -7,6 +7,16 @@ const APP_HTML = "__APP_HTML__";
 
 //__SMTP_JS__
 
+//__TURSO_JS__
+
+// 获取数据库：优先 Turso（环境变量配置），回退 D1
+function getDB(env) {
+  if (env.TURSO_URL && env.TURSO_TOKEN) {
+    return createTursoDB(env.TURSO_URL, env.TURSO_TOKEN);
+  }
+  return env.DB;
+}
+
 // ---------- 工具 ----------
 const now = () => Math.floor(Date.now() / 1000);
 
@@ -84,7 +94,7 @@ if (resp.ok) {
 const body = await resp.arrayBuffer();
 const headers = {};
 resp.headers.forEach((v, k) => { headers[k] = v; });
-apiCache.set(key, { body, headers, expires: Date.now() + 60000 });
+apiCache.set(key, { body, headers, expires: Date.now() + 300000 }); // 5 分钟缓存，降 D1 读
 // 防止内存无限增长，最多保留 200 条
 if (apiCache.size > 200) {
 const oldest = apiCache.keys().next().value;
@@ -571,6 +581,28 @@ await db.prepare(`DELETE FROM settings WHERE key LIKE 'sub_ratelimit\_%\_ts' AND
 // 清理孤立的限流计数（没有对应时间戳的）
 await db.prepare(`DELETE FROM settings WHERE key LIKE 'sub_ratelimit\_%' AND key NOT LIKE '%\_ts' AND NOT EXISTS (SELECT 1 FROM settings s2 WHERE s2.key = settings.key || '_ts')`).run();
 
+// 预计算 7 天统计（每小时一次，避免 /api/status 现场扫全表）
+try {
+  const statsNeed = await db.prepare(
+    `SELECT id FROM monitors WHERE stats_updated_at < ? LIMIT 1`
+  ).bind(ts - 3600).first();
+  if (statsNeed) {
+    const since7d = ts - 7 * 86400;
+    const allM = await db.prepare(`SELECT id FROM monitors`).all();
+    for (const mm of (allM.results || [])) {
+      const st = await db.prepare(
+        `SELECT COUNT(*) as total, SUM(CASE WHEN status='up' THEN 1 ELSE 0 END) as up, AVG(ms) as avg_ms FROM checks WHERE monitor_id=? AND checked_at>=?`
+      ).bind(mm.id, since7d).first();
+      const total = st.total || 0;
+      const uptime = total ? ((st.up || 0) / total * 100).toFixed(2) : "100.00";
+      const avgMs = Math.round(st.avg_ms || 0);
+      await db.prepare(
+        `UPDATE monitors SET uptime_7d=?, avg_ms_7d=?, stats_updated_at=? WHERE id=?`
+      ).bind(uptime, avgMs, ts, mm.id).run();
+    }
+  }
+} catch (e) { /* 列不存在时跳过（迁移前） */ }
+
 // 到期提醒（每天检查一次，用日期做去重）
 try {
   const today = new Date().toISOString().slice(0, 10);
@@ -906,20 +938,13 @@ return json({ title, subtitle });
 if (path === "/api/status" && method === "GET") {
 const ts = now();
 const monitorsR = await db.prepare(
-`SELECT id, name, type, target, interval_minutes, group_name, enabled, last_check_at, last_status, last_ms, consecutive_failures, created_at FROM monitors ORDER BY group_name, id`
+`SELECT id, name, type, target, interval_minutes, group_name, enabled, last_check_at, last_status, last_ms, consecutive_failures, created_at, uptime_7d, avg_ms_7d FROM monitors ORDER BY group_name, id`
 ).all();
 const monitors = monitorsR.results || [];
-// 为每个监控附加 7 天统计 + 近 50 条检测记录（曲线图用）
-const since7d = ts - 7 * 86400;
+// 7 天统计已由 cron 预计算，直接读；只查近期检测记录（曲线图用，24 条足够）
 for (const m of monitors) {
-const st = await db.prepare(
-`SELECT COUNT(*) as total, SUM(CASE WHEN status='up' THEN 1 ELSE 0 END) as up, AVG(ms) as avg_ms FROM checks WHERE monitor_id=? AND checked_at>=?`
-).bind(m.id, since7d).first();
-const total = st.total || 0;
-m.uptime_7d = total ? ((st.up || 0) / total * 100).toFixed(2) : "100.00";
-m.avg_ms_7d = Math.round(st.avg_ms || 0);
 const ck = await db.prepare(
-`SELECT checked_at, status, ms FROM checks WHERE monitor_id=? ORDER BY checked_at DESC LIMIT 50`
+`SELECT checked_at, status, ms FROM checks WHERE monitor_id=? ORDER BY checked_at DESC LIMIT 24`
 ).bind(m.id).all();
 m.recent_checks = (ck.results || []).reverse();
 }
@@ -1085,7 +1110,20 @@ const adminIp = getClientIp(req);
 // 管理：监控 CRUD
 if (path === "/api/admin/monitors" && method === "GET") {
 const r = await db.prepare(`SELECT * FROM monitors ORDER BY id`).all();
-return json({ monitors: r.results || []});
+// 返回各告警渠道是否已全局配置，前端只显示真正可用的
+const cfg = {};
+cfg.telegram = !!(await getSetting(db, "telegram_bot_token")) && !!(await getSetting(db, "telegram_chat_id"));
+cfg.email = !!(await getSetting(db, "resend_api_key")) && !!(await getSetting(db, "alert_email_from"));
+cfg.dingtalk = !!(await getSetting(db, "dingtalk_webhook"));
+cfg.bark = !!(await getSetting(db, "bark_url"));
+cfg.wecom = !!(await getSetting(db, "wecom_webhook"));
+cfg.custom_email = !!(await getSetting(db, "custom_email_url"));
+cfg.smtp = !!(await getSetting(db, "smtp_host")) && !!(await getSetting(db, "smtp_user"));
+cfg.serverchan = !!(await getSetting(db, "serverchan_sendkey"));
+cfg.wxpusher = !!(await getSetting(db, "wxpusher_spt"));
+cfg.feishu = !!(await getSetting(db, "feishu_webhook"));
+// webhook 是每个监控单独配的 URL，有填就算可用（前端按 m.webhook_url 判断）
+return json({ monitors: r.results || [], channels: cfg });
 }
 if (path === "/api/admin/monitors" && method === "POST") {
 const b = await req.json();
@@ -1345,25 +1383,26 @@ const guardBlock = botGuard(req, url.pathname);
 if (guardBlock) return guardBlock;
 // Agent 上报脚本下载
 if (url.pathname === "/agent.py") {
-return new Response("__AGENT_PY__", {
+const agentPy = "__AGENT_PY__".replaceAll("your-probe-domain.com", url.host);
+return new Response(agentPy, {
 headers: { "Content-Type": "text/x-python; charset=utf-8",
 "Content-Disposition": 'attachment; filename="probe-agent.py"'}
 });
 }
 if (url.pathname.startsWith("/api/")) {
 // 公开读接口走 60 秒缓存，命中不查 D1
-if (isCacheableApi(req, url.pathname)) return cachedApi(req, env.DB, env);
+if (isCacheableApi(req, url.pathname)) return cachedApi(req, getDB(env), env);
 // admin 写操作后清缓存，保证状态页及时更新
-const resp = await handleApi(req, env.DB, env);
+const resp = await handleApi(req, getDB(env), env);
 if (url.pathname.startsWith("/api/admin/") && req.method !== "GET" && resp.ok) invalidateApiCache();
 return resp;
 }
 // 访客记录（仅记录页面访问，不记录 API）
-ctx.waitUntil(logVisitor(req, env.DB, url.pathname));
+ctx.waitUntil(logVisitor(req, getDB(env), url.pathname));
 return new Response(APP_HTML, { headers: { "Content-Type": "text/html; charset=utf-8"}});
 },
 async scheduled(event, env, ctx) {
-ctx.waitUntil(handleCron(env.DB));
+ctx.waitUntil(handleCron(getDB(env)));
 }
 };
 
