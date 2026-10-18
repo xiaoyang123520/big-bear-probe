@@ -20,7 +20,18 @@ function rowsToObjects(cols, rows) {
     const obj = {};
     for (let i = 0; i < names.length; i++) {
       const v = r[i];
-      obj[names[i]] = (v && typeof v === "object" && "value" in v) ? v.value : v;
+      if (v && typeof v === "object" && "value" in v) {
+        // 按类型转换：integer 转数字，避免字符串 "0" 被当成 truthy
+        if (v.type === "integer" && v.value !== null) {
+          obj[names[i]] = parseInt(v.value, 10);
+        } else if (v.type === "float" && v.value !== null) {
+          obj[names[i]] = parseFloat(v.value);
+        } else {
+          obj[names[i]] = v.value;
+        }
+      } else {
+        obj[names[i]] = v;
+      }
     }
     return obj;
   });
