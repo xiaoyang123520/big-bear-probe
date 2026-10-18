@@ -650,13 +650,13 @@ async function toggleDetail(id) {
     // 点击 uptime 格子弹详情（checks 数据存在闭包外，用全局暂存）
     window._lastChecks = checks;
     window._lastChecksLoc = loc;
-    const m = monitorsCache.find(x => x.id === id);
+    const m = monitorsCache.find(x => String(x.id) === String(id));
     // Agent 类型：额外展示 CPU/内存/磁盘曲线
     let agentHtml = "";
     if (m && m.type === "agent") {
       try {
         const { stats } = await api(`/api/monitors/${id}/agent`);
-        if (stats.length) {
+        if (stats && stats.length) {
           const latest = stats[stats.length - 1];
           const bar = (v, label) => {
             const c = v > 85 ? "var(--red)" : v > 70 ? "var(--yellow)" : "var(--green)";
@@ -679,6 +679,27 @@ async function toggleDetail(id) {
                 <span title="${lang === "zh" ? "显示 – 表示该线路 TCP 被拦截或未测到" : "– means blocked or unreachable"}">${tt("ispMobile")} <b style="color:${latest.ping_mobile > 150 ? "var(--red)" : latest.ping_mobile > 80 ? "var(--yellow)" : "var(--green)"}">${latest.ping_mobile ? latest.ping_mobile + "ms" : "–"}</b></span>
               </div>
               <div style="font-size:11px;color:var(--muted);margin-top:4px">${tt("ispPingTip")}</div>
+            </div>` : ""}
+            ${m.ssl_days >= 0 ? `
+            <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+              <div style="font-size:13px;font-weight:600;margin-bottom:8px">🔒 SSL 证书</div>
+              ${(() => {
+                try {
+                  const list = JSON.parse(m.ssl_list || "[]");
+                  if (list.length > 0) {
+                    return list.map(s => {
+                      const c = s.days < 7 ? "var(--red)" : s.days < 30 ? "var(--yellow)" : "var(--green)";
+                      return `<div style="font-size:13px;margin-bottom:4px">${esc(s.domain)} <b style="color:${c}">剩 ${s.days} 天</b></div>`;
+                    }).join("");
+                  }
+                } catch (e) {}
+                // 兼容旧数据：只有单个
+                if (m.ssl_days >= 0) {
+                  const c = m.ssl_days < 7 ? "var(--red)" : m.ssl_days < 30 ? "var(--yellow)" : "var(--green)";
+                  return `<div style="font-size:13px">${esc(m.ssl_domain || "")} <b style="color:${c}">剩 ${m.ssl_days} 天</b></div>`;
+                }
+                return "";
+              })()}
             </div>` : ""}</div>`;
         } else {
           agentHtml = `<div style="margin-top:16px;padding:14px;background:rgba(59,130,246,.08);border:1px dashed rgba(59,130,246,.3);border-radius:8px;font-size:13px">
@@ -818,7 +839,7 @@ async function showDashboard() {
 
 async function editMonitor(id) {
   let m = { name: "", type: "http", target: "", interval_minutes: 5, group_name: "", keyword: "", expected_status: 200, enabled: 1, alert_telegram: 0, alert_email: 0, alert_webhook: 0, webhook_url: "", alert_dingtalk: 0, alert_bark: 0, alert_wecom: 0, alert_custom_email: 0, alert_smtp: 0, alert_serverchan: 0, alert_wxpusher: 0, alert_feishu: 0, ssh_threshold: 0, conn_threshold: 0, process_watch: "", ssl_domains: "", expire_at: 0 };
-  if (id) { const { monitors } = await api("/api/admin/monitors"); m = monitors.find(x => x.id === id) || m; }
+  if (id) { const { monitors } = await api("/api/admin/monitors"); m = monitors.find(x => String(x.id) === String(id)) || m; }
   window._editingMonitor = m; // 暂存，供 saveMonitor 在切换类型时保留阈值
   $("#form").innerHTML = `<div class="card"><h2>${id ? tt("editMonitor") : tt("addMonitorTitle")} ${tt("dashboard")}</h2>
     <div class="row"><div><label>${tt("monitorName")}</label><input id="f-name" value="${esc(m.name)}" placeholder="${tt("namePh")}"></div>
@@ -854,6 +875,10 @@ async function editMonitor(id) {
         <div><label>🌐 TCP 连接数阈值（0=不告警）</label><input id="f-conn" type="number" min="0" max="100000" value="${m.conn_threshold || 0}" placeholder="5000"></div>
         <div><label>🔍 关键进程监控（逗号分隔）</label><input id="f-procs" type="text" value="${esc(m.process_watch || "")}" placeholder="nginx,docker,mysql"></div>
       </div>
+      <div style="margin-top:8px"><label>🔒 SSL 证书到期检查（逗号分隔域名，Agent 在服务器上用 openssl 查）</label>
+        <div style="display:flex;gap:8px"><input id="f-ssldom" type="text" value="${esc(m.ssl_domains || "")}" placeholder="example.com,api.example.com" style="flex:1">
+        <button type="button" class="btn ghost" onclick="testSslCert()" style="white-space:nowrap">🧪 测试</button></div></div>
+      <p style="color:var(--muted);font-size:12px;margin-top:6px">💡 证书剩 7 天开始告警；留空不检查</p>
       <p style="color:var(--muted);font-size:12px;margin-top:6px">💡 连接数突增可能是 CC 攻击；关键进程停止会立即告警</p>
     </div>
     <label>${tt("alertMethod")}</label><div class="checkbox-row">
@@ -1014,7 +1039,7 @@ async function editMaintenance(id) {
   let mt = { title: "", description: "", start_at: 0, end_at: 0, status: "scheduled" };
   if (id) {
     const { maintenances } = await api("/api/admin/maintenances");
-    mt = maintenances.find(x => x.id === id) || mt;
+    mt = maintenances.find(x => String(x.id) === String(id)) || mt;
   }
   const toLocal = ts => {
     if (!ts) return "";
@@ -1086,7 +1111,7 @@ async function testMonitor(event, id) {
   const btn = event.target; btn.textContent = tt("testing"); btn.disabled = true;
   try {
     const r = await api(`/api/admin/test/${id}`, { method: "POST" });
-    const m = monitorsCache.find(x => x.id === id);
+    const m = monitorsCache.find(x => String(x.id) === String(id));
     const detail = (m && m.type === "agent") ? r.detail : `ms: ${r.ms}\n${r.detail}`;
     alert(`${r.status === "up" ? tt("testOk") : tt("testFail")}\n\n${detail}`);
     // 测试不改变监控状态，无需重载后台（避免清空正在编辑的表单）
@@ -1354,6 +1379,22 @@ async function saveSettings(event) {
   finally { btn.textContent = oldText; btn.disabled = false; }
 }
 
+async function testSslCert() {
+  const domains = $("#f-ssldom").value.trim();
+  if (!domains) { alert(lang === "zh" ? "请先填写要检查的域名" : "Please enter domains first"); return; }
+  // 从已保存的监控数据里读证书状态（需 Agent 上报过）
+  const m = window._editingMonitor;
+  if (m && m.id && m.ssl_days >= 0) {
+    const msg = lang === "zh"
+      ? `🔒 证书状态\n域名：${m.ssl_domain}\n剩余：${m.ssl_days} 天\n\n${m.ssl_days < 7 ? "⚠️ 7天内到期，会触发告警" : "✅ 正常，不会告警"}`
+      : `🔒 Cert status\nDomain: ${m.ssl_domain}\nRemaining: ${m.ssl_days} days\n\n${m.ssl_days < 7 ? "⚠️ Expiring soon, will alert" : "✅ OK"}`;
+    alert(msg);
+  } else {
+    alert(lang === "zh"
+      ? `已填写：${domains}\n\nAgent 下次上报（1-2分钟）后，这里会显示证书剩余天数。\n保存后等 2 分钟再点测试，就能看到实际数据。`
+      : `Domains: ${domains}\n\nCert info will appear after Agent reports (1-2 min).\nSave and wait 2 minutes, then test again.`);
+  }
+}
 async function testAlert(channel, btn) {
   const oldText = btn.textContent;
   btn.textContent = lang === "zh" ? "保存并发送中…" : "Saving & sending…";
