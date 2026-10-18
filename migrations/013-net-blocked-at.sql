@@ -1,0 +1,1 @@
+ALTER TABLE monitors ADD COLUMN net_blocked_at INTEGER DEFAULT 0;
