@@ -832,6 +832,9 @@ try {
 try {
   if (body.ssl_days !== undefined && body.ssl_days !== null) {
     const sslDays = parseInt(body.ssl_days, 10);
+    // 存下来供前端展示（ssl_list 是全部域名的 JSON）
+    const sslListJson = body.ssl_list ? JSON.stringify(body.ssl_list) : "";
+    await db.prepare(`UPDATE monitors SET ssl_days=?, ssl_domain=?, ssl_list=? WHERE id=?`).bind(sslDays, body.ssl_domain || "", sslListJson, m.id).run();
     const sslState = JSON.parse(m.ssl_alert_state || "{}");
     if (sslDays < 7) {
       const key = "exp_" + (body.ssl_domain || "cert");
@@ -958,7 +961,7 @@ return json({ title, subtitle });
 if (path === "/api/status" && method === "GET") {
 const ts = now();
 const monitorsR = await db.prepare(
-`SELECT id, name, type, target, interval_minutes, group_name, enabled, last_check_at, last_status, last_ms, consecutive_failures, created_at, uptime_7d, avg_ms_7d FROM monitors ORDER BY group_name, id`
+`SELECT id, name, type, target, interval_minutes, group_name, enabled, last_check_at, last_status, last_ms, consecutive_failures, created_at, uptime_7d, avg_ms_7d, ssl_days, ssl_domain, ssl_list FROM monitors ORDER BY group_name, id`
 ).all();
 const monitors = monitorsR.results || [];
 // 7 天统计已由 cron 预计算，直接读；只查近期检测记录（曲线图用，24 条足够）
