@@ -6,7 +6,11 @@ let worker = fs.readFileSync(path.join(dir, 'src/worker.js'), 'utf8');
 let html = fs.readFileSync(path.join(dir, 'src/app.html'), 'utf8');
 let agentPy = fs.readFileSync(path.join(dir, 'agent.py'), 'utf8');
 let smtpJs = fs.readFileSync(path.join(dir, 'src/smtp.js'), 'utf8');
+let tursoJs = fs.readFileSync(path.join(dir, 'src/turso.js'), 'utf8');
+// 去掉 turso.js 的 export 关键字，转为内联可用
+tursoJs = tursoJs.replace('export function createTursoDB', 'function createTursoDB');
 worker = worker.replace('//__SMTP_JS__', smtpJs);
+worker = worker.replace('//__TURSO_JS__', tursoJs);
 worker = worker.replace('const APP_HTML = "__APP_HTML__";', 'const APP_HTML = ' + JSON.stringify(html) + ';');
 worker = worker.replace('"__AGENT_PY__"', JSON.stringify(agentPy));
 fs.mkdirSync(path.join(dir, 'dist'), { recursive: true });
