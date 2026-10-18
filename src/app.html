@@ -1,0 +1,1428 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="服务状态监控 - 实时查看服务运行状态、可用率与历史故障">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐻</text></svg>">
+<title>🐻 大熊探针</title>
+<style>
+:root{
+  --bg:#0b0e14;--card:#151b26;--card2:#1a2230;--border:#263042;--text:#e8edf3;--muted:#8b95a7;
+  --green:#22c55e;--green-bg:rgba(34,197,94,.12);--red:#ef4444;--red-bg:rgba(239,68,68,.12);
+  --yellow:#f59e0b;--blue:#3b82f6;--radius:14px;
+}
+/* 下拉菜单 */
+.dropdown-menu{display:none;position:absolute;right:0;top:calc(100% + 6px);background:var(--card2);border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.35);z-index:100;min-width:168px;padding:6px;overflow:hidden}
+.dd-item{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:9px 12px;border:0;background:transparent;color:var(--text);font-size:13.5px;border-radius:8px;cursor:pointer;transition:background .12s}
+.dd-item:hover{background:rgba(255,255,255,.07)}
+.dd-item .dd-icon{font-size:15px;width:20px;text-align:center;flex-shrink:0}
+.dd-item.dd-danger{color:var(--red)}
+.dd-item.dd-danger:hover{background:var(--red-bg)}
+.dd-divider{height:1px;background:var(--border);margin:5px 8px}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;min-height:100vh;-webkit-font-smoothing:antialiased}
+/* 顶栏 */
+.topbar{border-bottom:1px solid var(--border);background:rgba(11,14,20,.85);backdrop-filter:blur(12px);position:sticky;top:0;z-index:10}
+.topbar-inner{max-width:960px;margin:0 auto;padding:14px 20px;display:flex;align-items:center;justify-content:space-between}
+.logo{font-size:18px;font-weight:700;display:flex;align-items:center;gap:8px}
+.logo small{font-weight:400;color:var(--muted);font-size:12px}
+.admin-link{color:var(--muted);font-size:13px;cursor:pointer;padding:6px 12px;border:1px solid var(--border);border-radius:8px;transition:.2s}
+.admin-link:hover{color:var(--text);border-color:var(--muted)}
+/* 主体 */
+main{max-width:960px;margin:0 auto;padding:28px 20px 80px}
+/* 大状态横幅 */
+.hero{border-radius:var(--radius);padding:32px;margin-bottom:24px;display:flex;align-items:center;gap:20px;border:1px solid;position:relative;overflow:hidden}
+.hero::before{content:"";position:absolute;inset:0;opacity:.6;pointer-events:none}
+.hero.ok{background:linear-gradient(135deg,rgba(34,197,94,.15),rgba(34,197,94,.05));border-color:rgba(34,197,94,.35)}
+.hero.ok::before{background:radial-gradient(circle at 20% 50%,rgba(34,197,94,.12),transparent 60%)}
+.hero.bad{background:linear-gradient(135deg,rgba(239,68,68,.15),rgba(239,68,68,.05));border-color:rgba(239,68,68,.35)}
+.hero.bad::before{background:radial-gradient(circle at 20% 50%,rgba(239,68,68,.12),transparent 60%)}
+.hero .icon{font-size:44px;line-height:1;position:relative;z-index:1}
+.hero h2{font-size:22px;margin-bottom:6px;position:relative;z-index:1}
+.hero p{color:var(--muted);font-size:14px;position:relative;z-index:1}
+.hero .pulse{width:16px;height:16px;border-radius:50%;flex-shrink:0;position:relative;z-index:1}
+.hero.ok .pulse{background:var(--green);box-shadow:0 0 0 0 rgba(34,197,94,.5);animation:pulse 2s infinite}
+.hero.bad .pulse{background:var(--red);box-shadow:0 0 0 0 rgba(239,68,68,.5);animation:pulse 1s infinite}
+@keyframes pulse{70%{box-shadow:0 0 0 12px rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}
+/* 统计条 */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}
+.stat{background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--border);border-radius:var(--radius);padding:18px 16px;text-align:center;transition:.2s;position:relative;overflow:hidden}
+.stat:hover{transform:translateY(-2px);border-color:#35415a}
+.stat .ico{font-size:22px;margin-bottom:6px}
+.stat .num{font-size:26px;font-weight:700}
+.stat .lbl{color:var(--muted);font-size:12px;margin-top:4px}
+.stat .num.green{color:var(--green)}.stat .num.red{color:var(--red)}
+@media(max-width:640px){.stats{grid-template-columns:repeat(2,1fr)}}
+/* 监控卡片 */
+.mon-card{background:linear-gradient(180deg,var(--card),rgba(21,27,38,.8));border:1px solid var(--border);border-radius:var(--radius);margin-bottom:14px;overflow:hidden;transition:all .25s ease}
+.mon-card:hover{border-color:#3d4b66;transform:translateY(-1px);box-shadow:0 8px 24px rgba(0,0,0,.25)}
+.mon-head{display:flex;align-items:center;justify-content:space-between;padding:18px 20px;cursor:pointer}
+.mon-info{display:flex;align-items:center;gap:12px}
+.mon-info .name{font-weight:600;font-size:16px}
+.mon-info .meta{color:var(--muted);font-size:12px;margin-top:2px}
+.mon-right{display:flex;align-items:center;gap:16px}
+.uptime-pct{font-size:20px;font-weight:700}
+.uptime-pct.good{color:var(--green)}.uptime-pct.warn{color:var(--yellow)}.uptime-pct.bad{color:var(--red)}
+.dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.dot.up{background:var(--green);box-shadow:0 0 6px var(--green)}
+.dot.down{background:var(--red);box-shadow:0 0 6px var(--red)}
+.dot.unknown{background:var(--muted)}
+.mon-detail{display:none;border-top:1px solid var(--border);padding:18px 20px;background:var(--card2)}
+.mon-detail.open{display:block}
+.uptime-bar{display:flex;gap:3px;margin:12px 0}
+.uptime-bar span{flex:1;height:32px;border-radius:4px;background:var(--border);min-width:4px;position:relative;cursor:default}
+.uptime-bar span.up{background:var(--green)}
+.uptime-bar span.down{background:var(--red)}
+.uptime-bar span:hover{transform:scaleY(1.15)}
+.detail-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:12px}
+.detail-grid .item{background:var(--bg);border-radius:8px;padding:10px;text-align:center}
+.detail-grid .item .v{font-size:16px;font-weight:600}
+.detail-grid .item .k{color:var(--muted);font-size:11px;margin-top:2px}
+/* 故障 */
+.incident{border-left:3px solid var(--red);background:var(--red-bg);border-radius:0 var(--radius) var(--radius) 0;padding:14px 18px;margin-bottom:14px}
+.incident .t{font-weight:600;margin-bottom:4px}
+.incident .d{color:var(--muted);font-size:13px}
+/* 历史 */
+.history-item{display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);font-size:14px;align-items:center}
+.history-item:last-child{border:none}
+.history-item .when{color:var(--muted);font-size:12px;min-width:130px}
+/* 按钮表单 */
+.btn{background:var(--blue);color:#fff;border:none;border-radius:8px;padding:9px 18px;cursor:pointer;font-size:14px;font-weight:500;transition:.2s}
+.btn:hover{filter:brightness(1.1)}
+.btn.danger{background:var(--red)}
+.badge{display:inline-block;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600}
+.badge.danger{background:rgba(239,68,68,.15);color:var(--red);border:1px solid rgba(239,68,68,.4)}
+.btn.ghost{background:transparent;border:1px solid var(--border);color:var(--text)}
+.btn.ghost:hover{border-color:var(--muted)}
+.btn.sm{padding:6px 12px;font-size:13px}
+input,select,textarea{background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:9px 12px;font-size:14px;width:100%;margin:4px 0;transition:.2s}
+input:focus,select:focus{outline:none;border-color:var(--blue)}
+label{font-size:13px;color:var(--muted);display:block;margin-top:12px;font-weight:500}
+.row{display:flex;gap:12px}.row>*{flex:1}
+@media(max-width:640px){
+  .row{flex-direction:column}
+  .mon-head{flex-direction:column;align-items:flex-start;gap:12px}
+  .mon-right{width:100%;justify-content:space-between}
+  .hero{padding:20px;flex-direction:column;text-align:center;gap:12px}
+  .hero .icon{font-size:36px}
+  .detail-grid{grid-template-columns:repeat(2,1fr)}
+  .topbar-inner{padding:10px 16px}
+  .logo{font-size:16px}
+  /* 后台表格移动端：允许横向滚动，避免挤压 */
+  .card table{display:block;overflow-x:auto;white-space:nowrap}
+}
+h2{font-size:17px;margin-bottom:4px}
+.section-title{font-size:15px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:28px 0 14px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:12px 8px;border-bottom:1px solid var(--border);text-align:left}
+th{color:var(--muted);font-weight:500;font-size:12px;text-transform:uppercase;letter-spacing:.3px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:22px;margin-bottom:16px}
+.checkbox-row{display:flex;gap:18px;margin-top:8px;flex-wrap:wrap}
+.checkbox-row label{display:flex;align-items:center;gap:8px;margin:0;color:var(--text);cursor:pointer;font-size:14px}
+.checkbox-row input{width:16px;height:16px;accent-color:var(--blue)}
+.refresh-hint{text-align:center;color:var(--muted);font-size:12px;margin-top:20px}
+/* 响应时间曲线 */
+.sparkline{width:120px;height:36px;flex-shrink:0}
+.sparkline polyline{fill:none;stroke:var(--blue);stroke-width:1.5}
+.sparkline .area{fill:rgba(59,130,246,.15);stroke:none}
+/* 维护横幅 */
+.maint-banner{background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);border-radius:var(--radius);padding:16px 20px;margin-bottom:16px;display:flex;gap:12px;align-items:flex-start}
+.maint-banner .icon{font-size:24px}
+.maint-banner .t{font-weight:600;margin-bottom:4px}
+.maint-banner .d{color:var(--muted);font-size:13px}
+/* 骨架屏 */
+.skeleton{background:linear-gradient(90deg,var(--card) 25%,var(--card2) 50%,var(--card) 75%);background-size:200% 100%;animation:shimmer 1.5s infinite;border-radius:var(--radius)}
+@keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.skeleton-hero{height:110px;margin-bottom:24px}
+.skeleton-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}
+.skeleton-stats div{height:90px}
+.skeleton-card{height:76px;margin-bottom:14px}
+@media(max-width:640px){.skeleton-stats{grid-template-columns:repeat(2,1fr)}}
+/* 历史时间线 */
+.timeline{position:relative;padding-left:24px}
+.timeline::before{content:"";position:absolute;left:7px;top:8px;bottom:8px;width:2px;background:var(--border)}
+.timeline-item{position:relative;padding:10px 0}
+.timeline-item::before{content:"";position:absolute;left:-21px;top:14px;width:10px;height:10px;border-radius:50%;background:var(--red);border:2px solid var(--bg)}
+.timeline-item.recovered::before{background:var(--green)}
+.timeline-item .when{color:var(--muted);font-size:12px}
+.timeline-item .what{font-size:14px;margin-top:2px}
+footer{text-align:center;color:var(--muted);font-size:12px;padding:24px;border-top:1px solid var(--border);margin-top:40px}
+.empty{text-align:center;color:var(--muted);padding:40px 20px}
+.empty .big{font-size:40px;margin-bottom:12px}
+</style>
+</head>
+<body>
+<div class="topbar"><div class="topbar-inner">
+  <div class="logo">🐻 <span>大熊探针</span> <small id="subtitle"></small></div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <span style="font-size:13px;color:var(--muted);cursor:pointer;padding:6px 10px;border:1px solid var(--border);border-radius:8px" onclick="toggleLang()" id="lang-btn">EN</span>
+    <span class="admin-link" onclick="showAdmin()">⚙️ <span id="admin-link-txt">管理</span></span>
+  </div>
+</div></div>
+<main id="app">
+  <div class="skeleton skeleton-hero"></div>
+  <div class="skeleton-stats"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
+  <div id="skel-cards"></div>
+</main>
+<script>
+// 骨架屏卡片数按上次监控数渲染，减少加载完布局跳动
+try {
+  const n = Math.min(Math.max(parseInt(localStorage.getItem("probe_mon_count") || "3", 10), 1), 20);
+  document.getElementById("skel-cards").innerHTML = Array(n).fill('<div class="skeleton skeleton-card"></div>').join("");
+} catch (e) {
+  document.getElementById("skel-cards").innerHTML = '<div class="skeleton skeleton-card"></div>'.repeat(3);
+}
+</script>
+<footer>
+  <div style="max-width:960px;margin:0 auto;padding:0 20px">
+    <div style="margin-bottom:16px">
+      <div style="font-size:14px;font-weight:600;margin-bottom:8px">📬 订阅状态通知</div>
+      <div style="display:flex;gap:8px;max-width:400px;margin:0 auto">
+        <input id="sub-email" type="email" placeholder="输入邮箱，故障时第一时间通知你" style="text-align:left">
+        <button class="btn sm" onclick="doSubscribe()" style="white-space:nowrap">订阅</button>
+      </div>
+      <div id="sub-msg" style="font-size:12px;margin-top:6px;min-height:18px"></div>
+    </div>
+    <div style="border-top:1px solid var(--border);padding-top:16px">Probe · Powered by Cloudflare Workers · <span id="updatetime"></span></div>
+  </div>
+</footer>
+
+<script>
+const $ = s => document.querySelector(s);
+let adminToken = localStorage.getItem("probe_admin") || "";
+let monitorsCache = [];
+let currentView = "status"; // status | admin
+let lang = localStorage.getItem("probe_lang") || "zh";
+
+// ---------- 多语言 ----------
+const STR = {
+zh: {
+  status: "大熊探针", admin: "管理", allOk: "所有系统运行正常", hasDown: n => `${n} 个服务出现故障`,
+  lastUpdate: "最后更新", autoCheck: "页面每分钟自动刷新",
+  total: "监控总数", normal: "正常", down: "故障", avgResp: "平均响应",
+  currentIncidents: "当前故障", serviceList: "服务列表", history: "历史故障（近 30 天）",
+  incidentStart: "故障开始于", ongoing: "已持续", recovered: "发生故障，已恢复", duration: "持续",
+  noMonitors: "暂无监控", noMonitorsSub: "管理员可在后台添加第一个监控目标",
+  min: "分钟", hour: "小时", day: "天", secAgo: "秒前", minAgo: "分钟前", hourAgo: "小时前", dayAgo: "天前", never: "从未检测",
+  uptime7d: "7天可用率", uptime30d: "30天可用率", checks30d: "30天检测次数", avgMs: "平均响应",
+  recentChecks: n => `最近 ${n} 次检测（点击查看详情）`, lastCheck: "上次检测", noData: "暂无数据",
+  visitorTitle: "👥 访客统计（近 7 天）", dailyStats: "📊 每日统计", recentVisits: "🕐 最近访问",
+  susIp: "⚠️ 可疑 IP（1 分钟内请求 ≥60 次）", date: "日期", time: "时间", ipHash: "IP 哈希",
+  country: "国家", path: "路径", device: "设备", visitorNote: "IP 仅存哈希（隐私保护），日志 30 天自动清理",
+  server: "服务器", everyNMin: n => `每${n}分钟检测`, online: "在线",
+  cpu: "CPU", mem: "内存", disk: "磁盘", serverRes: n => `服务器资源（${n} 个上报点）`,
+  load: "负载", uptime: "已运行", reported: "上报", waitingAgent: "等待 Agent 首次上报…",
+  waitingAgentSub: "在服务器上运行上报脚本，配置 Token 即可接入。",
+  subscribe: "订阅状态通知", subscribePh: "输入邮箱，故障时第一时间通知你", subscribeBtn: "订阅",
+  subscribeOk: "验证邮件已发送，请查收", subscribed: "已订阅", enterEmail: "请输入邮箱", sending: "发送中…",
+  maintActive: "进行中", maintUpcoming: "计划于", maintEnds: "预计结束",
+  login: "管理员登录", loginSub: "首次登录请设置 10 位以上强密码，即为管理员密码", pwPh: "输入密码（10 位以上）", loginBtn: "登录", back: "返回",
+  dashboard: "监控管理", monitorsN: n => `${n} 个监控`, enabledN: n => `${n} 个启用中`,
+  addMonitor: "+ 添加监控", maintenance: "🛠️ 计划维护", alertSettings: "⚙️ 告警设置", preview: "👁️ 预览", logout: "退出",
+  name: "名称", type: "类型", target: "目标", freq: "频率", alert: "告警", statusCol: "状态", ops: "操作",
+  test: "测试", edit: "编辑", del: "删", more: "更多", deploy: "📥 部署", confirmDel: "确定删除？该监控的所有历史数据也会被删除。",
+  editMonitor: "✏️ 编辑", addMonitorTitle: "➕ 添加", monitorName: "名称 *", namePh: "如：我的博客",
+  typeHttp: "🌐 HTTP/HTTPS", typeTcp: "🔌 TCP 端口（需 Workers 付费版）", typeSsl: "🔒 SSL (443)", typeAgent: "🖥️ 服务器 Agent（CPU/内存/磁盘）",
+  agentTip: "Agent 类型：在服务器上运行上报脚本即可。保存后会生成 <b>Agent Token</b>，把 token 填进脚本配置里。",
+  agentTipSub: "目标字段可留空或填服务器备注（如 IP）。检测频率 = 心跳超时的一半（如 5 分钟频率，10 分钟没上报即告警）。",
+  targetLabel: "目标 *", targetPh: "HTTP填完整URL如 https://example.com；TCP填 host:port 如 example.com:22",
+  targetPhHttp: "https://example.com",
+  targetPhTcp: "example.com:22",
+  targetPhSsl: "example.com",
+  targetPhAgent: "服务器名称，如 香港HK",
+  targetHelpHttp: "💡 填写网站完整地址，系统会定时访问检查是否正常",
+  targetHelpTcp: "💡 填写 服务器地址:端口，系统会尝试建立 TCP 连接（如 8.8.8.8:53）",
+  targetHelpSsl: "💡 填写域名（不用加 https://），系统会检查 SSL 证书是否有效、是否快过期",
+  targetHelpAgent: "💡 给这台服务器起个名字，部署后 Agent 会自动上报",
+  targetPhAgent: "备注（可选），如 123.60.31.26", freqLabel: "检测频率",
+  freq1: "1分钟（最灵敏）", freq5: "5分钟（推荐）", freq15: "15分钟", freq30: "30分钟", freq60: "1小时（最省）",
+  expectCode: "期望状态码（HTTP）", keyword: "关键词匹配（可选，响应体包含才算正常）", keywordPh: "如：Welcome",
+  thresholdTitle: "📊 资源阈值告警（0 = 不告警）", cpuTh: "CPU 超过 % 告警", memTh: "内存超过 % 告警", diskTh: "磁盘超过 % 告警",
+  thresholdTip: "超过阈值发一次告警，回落到阈值的 90% 以下再发恢复通知，避免反复轰炸。",
+  alertMethod: "告警方式（可多选）", tg: "📱 Telegram", email: "📧 邮件", webhook: "🔗 Webhook", enableMon: "✅ 启用监控",
+  webhookUrl: "Webhook URL（启用 Webhook 时填）", save: "💾 保存", cancel: "取消",
+  groupLabel: "分组（可选）", groupPh: "如：生产环境、测试环境",
+  testing: "检测中…", testOk: "✅ 正常", testFail: "❌ 异常", testFailMsg: "失败：",
+  saveOk: "✅ 已保存", saveFail: "保存失败：", delFail: "删除失败：", nameRequired: "名称必填", targetRequired: "目标必填",
+  deployGuide: "📥 Agent 部署指南", deployDesc: "在要监控的服务器上执行 <b>这一条命令</b> 即可（自动处理下载、填 Token、装 cron、加定时任务）：",
+  copy: "复制", deployTip1: "执行完等 1-2 分钟，状态页就会显示这台服务器的 CPU/内存/磁盘。",
+  deployVerify: "验证：", deployUninstall: "卸载：", close: "关闭", tokenManual: "Token（手动安装时用）",
+  regenToken: "🔄 重新生成 Token（旧 Token 立即失效）", regenConfirm: "确定重新生成 Token？旧 Token 会立即失效，服务器上的 Agent 需要更新配置才能继续上报。",
+  regenOk: "✅ 新 Token 已生成，旧 Token 已失效。",
+  maintTitle: "🛠️ 计划维护", maintNew: "+ 新建", maintDesc: "维护期间状态页顶部会显示黄色横幅，提前告知用户。",
+  maintThTitle: "标题", maintThTime: "时间", maintThStatus: "状态", maintThOps: "操作", noMaint: "暂无计划维护",
+  maintEdit: "✏️ 编辑", maintAdd: "➕ 新建", maintNamePh: "如：数据库升级维护", maintDescPh: "维护内容、影响范围…",
+  maintStart: "开始时间 *", maintEnd: "结束时间 *", stScheduled: "📅 已计划", stOngoing: "🟡 进行中", stCompleted: "✅ 已完成", stCancelled: "❌ 已取消",
+  maintTitleReq: "标题和时间必填", maintTimeErr: "结束时间必须晚于开始时间", maintDelConfirm: "确定删除这条计划维护？",
+  settingsTitle: "⚙️ 告警设置", settingsDesc: "以下配置全局生效，各监控可单独开关是否使用。",
+  brandTitle: "🎨 品牌定制", siteTitle: "站点标题", siteTitlePh: "如：我的服务状态", siteSubtitle: "副标题", siteSubtitlePh: "如：My Company Status", adminPath: "后台入口路径", adminPathDesc: "改后需访问新路径进后台，如 /myadmin123", adminPathInvalid: "后台路径不能是根路径 /，请换一个",
+  tgTitle: "📱 Telegram", tgToken: "Bot Token", tgTokenPh: "从 @BotFather 获取", tgChatId: "Chat ID", tgChatIdPh: "给 @userinfobot 发消息获取",
+  emailTitle: "📧 邮件（Resend）", resendKey: "Resend API Key", resendKeyPh: "resend.com 获取", fromEmail: "发件地址", fromEmailPh: "noreply@你的域名.com",
+  toEmail: "收件地址（管理员告警）", toEmailPh: "告警邮件发到哪里",
+  subEmailNote: "访客订阅用的是同一个发件地址和 Resend Key。",
+  tokenKeyNote: "Token/Key 显示为 *** + 末4位。留空则不修改，填新值则覆盖。", loading: "加载中…",
+  groupDefault: "未分组",
+  dingtalk: "🔔 钉钉", bark: "🔔 Bark", wecom: "🔔 企业微信",
+  sshTh: "SSH 爆破告警（10分钟内失败次数，0=不告警）",
+  sshTip: "Agent 每分钟统计 SSH 失败登录，超过阈值发一次告警，回落后解除。",
+  dingTitle: "🔔 钉钉机器人", dingWebhook: "钉钉 Webhook", dingWebhookPh: "群设置 → 智能群助手 → 添加机器人",
+  barkTitle: "🔔 Bark", barkUrl: "Bark 推送 URL", barkUrlPh: "如 https://api.day.app/你的key",
+  wecomTitle: "🔔 企业微信机器人", wecomWebhook: "企业微信 Webhook", wecomWebhookPh: "群设置 → 群机器人 → 添加",
+  customEmail: "📧 自建邮件", cemTitle: "📧 自建邮件接口", cemUrl: "接口 URL", cemUrlPh: "如 https://你的服务器/send-mail",
+  cemHeaders: "请求头（JSON，可选）", cemHeadersPh: '{"Authorization":"Bearer xxx"}',
+  cemFrom: "发件人（可选）", cemFromPh: "默认用邮件设置的发件地址",
+  cemTo: "收件人（可选）", cemToPh: "默认用邮件设置的收件地址",
+  cemNote: "告警时 POST JSON 到接口：{from, to, subject, text, monitor}。你的服务收到后自行发邮件。",
+  smtp: "📧 SMTP", serverchan: "🔔 Server酱", wxpusher: "🔔 WxPusher", feishu: "🔔 飞书",
+  expireLabel: "到期时间（可选）",
+  smtpTitle: "📧 SMTP 直发", smtpNote: "需 Workers 付费版（sockets）。免费版用不了，会静默失败。",
+  smtpHost: "SMTP 服务器", smtpPort: "端口", smtpUser: "用户名", smtpPass: "密码",
+  smtpPassPh: "留空不修改", smtpFrom: "发件人", smtpFromPh: "默认用用户名",
+  smtpTo: "收件人（逗号分隔）", smtpToPh: "默认用邮件设置的收件地址", smtpSecure: "加密方式",
+  scTitle: "🔔 Server酱", scSendkey: "SendKey", wxpTitle: "🔔 WxPusher", wxpSpt: "appToken (SPT_xxx)",
+  fsTitle: "🔔 飞书", fsWebhook: "群机器人 Webhook", fsWebhookPh: "群设置 → 群机器人 → 添加",
+  expTitle: "⏰ 到期提醒", expDays: "提前多少天告警",
+  ispPing: "三网延迟", ispPingTip: "服务器到三网 DNS 的 TCP 延迟，间接反映线路质量",
+  ispTelecom: "电信", ispUnicom: "联通", ispMobile: "移动",
+  logs: "操作日志", logTime: "时间", logAction: "操作", logDetail: "详情", noLogs: "暂无日志",
+  changePw: "修改管理员密码", oldPw: "旧密码", newPw: "新密码", newPwTip: "至少 10 位", confirmPw: "确认新密码",
+  changePwBtn: "修改密码", fillAll: "请填写完整", pwTooShort: "新密码至少 10 位", pwMismatch: "两次输入的新密码不一致", pwChanged: "密码修改成功",
+  totpTitle: "双因素认证（TOTP）", totpDesc: "绑定后登录需输入手机验证器上的 6 位动态码，密码泄露也进不来", totpSetup: "开始绑定", totpPh: "6 位动态码", totpEnable: "验证并启用", totpEnabled: "已启用双因素认证", totpDisable: "禁用", totpDisabled: "已禁用", totpDisablePw: "请输入当前密码以禁用双因素认证：", totpManual: "或手动输入密钥：",
+},
+en: {
+  status: "Big Bear Probe", admin: "Admin", allOk: "All Systems Operational", hasDown: n => `${n} service${n > 1 ? "s" : ""} down`,
+  lastUpdate: "Updated", autoCheck: "Page auto-refreshes every minute",
+  total: "Monitors", normal: "Up", down: "Down", avgResp: "Avg Response",
+  currentIncidents: "Current Incidents", serviceList: "Services", history: "Incident History (30 days)",
+  incidentStart: "Started", ongoing: "ongoing for", recovered: "had an incident, recovered", duration: " lasted ",
+  noMonitors: "No monitors yet", noMonitorsSub: "Admin can add the first monitor in the dashboard",
+  min: "min", hour: "h", day: "d", secAgo: "s ago", minAgo: "m ago", hourAgo: "h ago", dayAgo: "d ago", never: "Never checked",
+  uptime7d: "7d uptime", uptime30d: "30d uptime", checks30d: "Checks (30d)", avgMs: "Avg response",
+  recentChecks: n => `Last ${n} checks (click for details)`, lastCheck: "Last check", noData: "No data",
+  visitorTitle: "👥 Visitors (7 days)", dailyStats: "📊 Daily", recentVisits: "🕐 Recent",
+  susIp: "⚠️ Suspicious IPs (≥60 req/min)", date: "Date", time: "Time", ipHash: "IP Hash",
+  country: "Country", path: "Path", device: "Device", visitorNote: "IPs stored as hash only, logs auto-clean in 30 days",
+  server: "Server", everyNMin: n => `Every ${n} min`, online: "Online",
+  cpu: "CPU", mem: "Memory", disk: "Disk", serverRes: n => `Server Resources (${n} data points)`,
+  load: "Load", uptime: "Uptime", reported: "Reported", waitingAgent: "Waiting for first agent report…",
+  waitingAgentSub: "Run the agent script on your server with the token to connect.",
+  subscribe: "Subscribe to Updates", subscribePh: "Enter email for incident notifications", subscribeBtn: "Subscribe",
+  subscribeOk: "Verification email sent", subscribed: "Subscribed", enterEmail: "Enter email", sending: "Sending…",
+  maintActive: "Ongoing", maintUpcoming: "Scheduled", maintEnds: "Ends",
+  login: "Admin Login", loginSub: "Set a strong password (10+ chars) on first login", pwPh: "Password (10+ chars)", loginBtn: "Login", back: "Back",
+  dashboard: "Monitors", monitorsN: n => `${n} monitors`, enabledN: n => `${n} enabled`,
+  addMonitor: "+ Add Monitor", maintenance: "🛠️ Maintenance", alertSettings: "⚙️ Alert Settings", preview: "👁️ Preview", logout: "Logout",
+  name: "Name", type: "Type", target: "Target", freq: "Interval", alert: "Alerts", statusCol: "Status", ops: "Actions",
+  test: "Test", edit: "Edit", del: "Delete", more: "More", deploy: "📥 Deploy", confirmDel: "Delete? All history will be removed.",
+  editMonitor: "✏️ Edit", addMonitorTitle: "➕ Add", monitorName: "Name *", namePh: "e.g. My Blog",
+  typeHttp: "🌐 HTTP/HTTPS", typeTcp: "🔌 TCP Port (Workers Paid)", typeSsl: "🔒 SSL (443)", typeAgent: "🖥️ Server Agent (CPU/Mem/Disk)",
+  agentTip: "Agent type: run the report script on your server. An <b>Agent Token</b> will be generated after saving.",
+  agentTipSub: "Target is optional (e.g. server IP). Check interval = half the heartbeat timeout.",
+  targetLabel: "Target *", targetPh: "HTTP: full URL e.g. https://example.com; TCP: host:port e.g. example.com:22",
+  targetPhHttp: "https://example.com",
+  targetPhTcp: "example.com:22",
+  targetPhSsl: "example.com",
+  targetPhAgent: "Server name, e.g. HK-01",
+  targetHelpHttp: "💡 Full website URL, will be checked periodically",
+  targetHelpTcp: "💡 Format host:port, will try TCP connect (e.g. 8.8.8.8:53)",
+  targetHelpSsl: "💡 Domain name (no https://), checks SSL cert validity and expiry",
+  targetHelpAgent: "💡 Name this server, agent will report automatically after deploy",
+  targetPhAgent: "Note (optional), e.g. 123.60.31.26", freqLabel: "Check interval",
+  freq1: "1 min (most sensitive)", freq5: "5 min (recommended)", freq15: "15 min", freq30: "30 min", freq60: "1 hour",
+  expectCode: "Expected status code (HTTP)", keyword: "Keyword match (optional)", keywordPh: "e.g. Welcome",
+  thresholdTitle: "📊 Resource alert thresholds (0 = disabled)", cpuTh: "CPU over %", memTh: "Memory over %", diskTh: "Disk over %",
+  thresholdTip: "Alert once when exceeded, recovery notice when drops below 90% of threshold.",
+  alertMethod: "Alert methods", tg: "📱 Telegram", email: "📧 Email", webhook: "🔗 Webhook", enableMon: "✅ Enabled",
+  webhookUrl: "Webhook URL", save: "💾 Save", cancel: "Cancel",
+  groupLabel: "Group (optional)", groupPh: "e.g. Production, Staging",
+  testing: "Testing…", testOk: "✅ Up", testFail: "❌ Down", testFailMsg: "Failed: ",
+  saveOk: "✅ Saved", saveFail: "Save failed: ", delFail: "Delete failed: ", nameRequired: "Name required", targetRequired: "Target required",
+  deployGuide: "📥 Agent Deploy Guide", deployDesc: "Run <b>this one command</b> on your server (auto downloads, sets token, installs cron):",
+  copy: "Copy", deployTip1: "Wait 1-2 min, server resources will appear on the status page.",
+  deployVerify: "Verify: ", deployUninstall: "Uninstall: ", close: "Close", tokenManual: "Token (for manual install)",
+  regenToken: "🔄 Regenerate Token (old invalid immediately)", regenConfirm: "Regenerate token? Old token invalidates immediately, update agent config.",
+  regenOk: "✅ New token generated, old invalidated.",
+  maintTitle: "🛠️ Scheduled Maintenance", maintNew: "+ New", maintDesc: "A yellow banner shows on the status page during maintenance.",
+  maintThTitle: "Title", maintThTime: "Time", maintThStatus: "Status", maintThOps: "Actions", noMaint: "No scheduled maintenance",
+  maintEdit: "✏️ Edit", maintAdd: "➕ New", maintNamePh: "e.g. Database upgrade", maintDescPh: "What, impact…",
+  maintStart: "Start *", maintEnd: "End *", stScheduled: "📅 Scheduled", stOngoing: "🟡 Ongoing", stCompleted: "✅ Done", stCancelled: "❌ Cancelled",
+  maintTitleReq: "Title and time required", maintTimeErr: "End must be after start", maintDelConfirm: "Delete this maintenance?",
+  settingsTitle: "⚙️ Alert Settings", settingsDesc: "Global settings, each monitor can toggle usage.",
+  brandTitle: "🎨 Branding", siteTitle: "Site title", siteTitlePh: "e.g. My Status Page", siteSubtitle: "Subtitle", siteSubtitlePh: "e.g. Acme Corp", adminPath: "Admin path", adminPathDesc: "After change, visit new path for admin, e.g. /myadmin123", adminPathInvalid: "Admin path cannot be /, please choose another",
+  tgTitle: "📱 Telegram", tgToken: "Bot Token", tgTokenPh: "Get from @BotFather", tgChatId: "Chat ID", tgChatIdPh: "Message @userinfobot",
+  emailTitle: "📧 Email (Resend)", resendKey: "Resend API Key", resendKeyPh: "Get at resend.com", fromEmail: "From", fromEmailPh: "noreply@yourdomain.com",
+  toEmail: "To (admin alerts)", toEmailPh: "Where to send alerts",
+  subEmailNote: "Visitor subscriptions use the same from address and Resend key.",
+  tokenKeyNote: "Tokens/keys show as *** + last 4. Leave blank to keep, fill to overwrite.", loading: "Loading…",
+  groupDefault: "Ungrouped",
+  dingtalk: "🔔 DingTalk", bark: "🔔 Bark", wecom: "🔔 WeCom",
+  sshTh: "SSH brute-force alert (failures in 10min, 0=off)",
+  sshTip: "Agent counts SSH failures each minute, alerts once over threshold.",
+  dingTitle: "🔔 DingTalk Bot", dingWebhook: "DingTalk Webhook", dingWebhookPh: "Group settings → Add bot",
+  barkTitle: "🔔 Bark", barkUrl: "Bark push URL", barkUrlPh: "e.g. https://api.day.app/yourkey",
+  wecomTitle: "🔔 WeCom Bot", wecomWebhook: "WeCom Webhook", wecomWebhookPh: "Group settings → Add bot",
+  customEmail: "📧 Custom Email", cemTitle: "📧 Custom Email API", cemUrl: "API URL", cemUrlPh: "e.g. https://your-server/send-mail",
+  cemHeaders: "Headers (JSON, optional)", cemHeadersPh: '{"Authorization":"Bearer xxx"}',
+  cemFrom: "From (optional)", cemFromPh: "Defaults to email settings",
+  cemTo: "To (optional)", cemToPh: "Defaults to email settings",
+  cemNote: "POSTs JSON {from, to, subject, text, monitor} on alert. Your service sends the email.",
+  smtp: "📧 SMTP", serverchan: "🔔 ServerChan", wxpusher: "🔔 WxPusher", feishu: "🔔 Feishu",
+  expireLabel: "Expiry date (optional)",
+  smtpTitle: "📧 SMTP Direct", smtpNote: "Requires Workers paid plan (sockets). Fails silently on free plan.",
+  smtpHost: "SMTP host", smtpPort: "Port", smtpUser: "Username", smtpPass: "Password",
+  smtpPassPh: "Blank to keep", smtpFrom: "From", smtpFromPh: "Defaults to username",
+  smtpTo: "To (comma separated)", smtpToPh: "Defaults to email settings", smtpSecure: "Encryption",
+  scTitle: "🔔 ServerChan", scSendkey: "SendKey", wxpTitle: "🔔 WxPusher", wxpSpt: "appToken (SPT_xxx)",
+  fsTitle: "🔔 Feishu", fsWebhook: "Bot Webhook", fsWebhookPh: "Group settings → Add bot",
+  expTitle: "⏰ Expiry Alert", expDays: "Alert days before",
+  ispPing: "ISP Latency", ispPingTip: "TCP latency to China ISP DNS servers",
+  ispTelecom: "Telecom", ispUnicom: "Unicom", ispMobile: "Mobile",
+  logs: "Logs", logTime: "Time", logAction: "Action", logDetail: "Detail", noLogs: "No logs",
+  changePw: "Change Admin Password", oldPw: "Old password", newPw: "New password", newPwTip: "At least 10 chars", confirmPw: "Confirm new password",
+  changePwBtn: "Change password", fillAll: "Please fill all fields", pwTooShort: "New password must be at least 10 chars", pwMismatch: "New passwords do not match", pwChanged: "Password changed",
+  totpTitle: "Two-factor auth (TOTP)", totpDesc: "After binding, login requires 6-digit code from authenticator app", totpSetup: "Start setup", totpPh: "6-digit code", totpEnable: "Verify & enable", totpEnabled: "2FA enabled", totpDisable: "Disable", totpDisabled: "Disabled", totpDisablePw: "Enter current password to disable 2FA:", totpManual: "Or enter manually: ",
+}
+};
+const t = k => STR[lang][k];
+// 简写：tt('key') 取字符串，tt('hasDown', n) 传参
+function tt(k, ...a) { const v = STR[lang][k]; return typeof v === "function" ? v(...a) : v; }
+function toggleLang() {
+  setLang(lang === "zh" ? "en" : "zh");
+}
+function setLang(l) {
+  lang = l;
+  try { localStorage.setItem("probe_lang", l); } catch (e) {}
+  // 先更新按钮文字，再刷页面；loadBranding 失败也不影响主流程
+  const btn = document.getElementById("lang-btn");
+  if (btn) btn.textContent = lang === "zh" ? "EN" : "中文";
+  const adminTxt = document.getElementById("admin-link-txt");
+  if (adminTxt) adminTxt.textContent = tt("admin");
+  loadStatus();
+  loadBranding().catch(() => {});
+}
+
+async function api(path, opts = {}) {
+  const headers = { "Content-Type": "application/json" };
+  if (adminToken) headers["X-Admin-Token"] = adminToken;
+  const r = await fetch(path, { ...opts, headers: { ...headers, ...(opts.headers || {}) } });
+  const d = await r.json().catch(() => ({}));
+  if (r.status === 401 && adminToken && currentView === "admin") {
+    // token 失效/被顶掉：统一跳回登录页
+    logout(); showLogin();
+    throw new Error(lang === "zh" ? "登录已过期，请重新登录" : "Session expired, please login again");
+  }
+  if (!r.ok) throw new Error(d.error || r.status);
+  return d;
+}
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+function showModal(html) {
+  closeModal();
+  const ov = document.createElement("div");
+  ov.id = "modal-ov";
+  ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px";
+  ov.innerHTML = html;
+  ov.addEventListener("click", e => { if (e.target === ov) closeModal(); });
+  document.body.appendChild(ov);
+}
+function closeModal() {
+  const ov = document.getElementById("modal-ov");
+  if (ov) ov.remove();
+}
+function ago(ts) {
+  if (!ts) return tt("never");
+  const s = Math.floor(Date.now() / 1000) - ts;
+  if (s < 60) return s + tt("secAgo");
+  if (s < 3600) return Math.floor(s / 60) + tt("minAgo");
+  if (s < 86400) return Math.floor(s / 3600) + tt("hourAgo");
+  return Math.floor(s / 86400) + tt("dayAgo");
+}
+function pctClass(p) { p = parseFloat(p); return p >= 99 ? "good" : p >= 95 ? "warn" : "bad"; }
+
+// ---------- 状态页 ----------
+// 用聚合接口的 recent_checks 直接渲染曲线图（无需额外请求）
+function sparkSvg(m) {
+  const checks = m.recent_checks || [];
+  const data = checks.filter(c => c.status === "up").map(c => c.ms);
+  if (data.length < 2) return `<svg class="sparkline" viewBox="0 0 120 36" preserveAspectRatio="none"><polyline points=""/></svg>`;
+  const max = Math.max(...data, 1), min = Math.min(...data, 0);
+  const range = max - min || 1;
+  const pts = data.map((v, i) => {
+    const x = (i / (data.length - 1)) * 120;
+    const y = 34 - ((v - min) / range) * 30;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  return `<svg class="sparkline" viewBox="0 0 120 36" preserveAspectRatio="none"><polygon class="area" points="0,36 ${pts} 120,36"/><polyline points="${pts}"/></svg>`;
+}
+
+async function loadStatus() {
+  currentView = "status";
+  try {
+    // 聚合接口：一次返回监控列表（含7天统计+检测记录）、故障、维护、品牌
+    const data = await api("/api/status");
+    const monitors = data.monitors || [];
+    const incidents = data.incidents || [];
+    const maintenances = data.maintenances || [];
+    const histData = { incidents: data.history || [] };
+    // 品牌信息直接用聚合返回的
+    if (data.branding) {
+      const { title, subtitle } = data.branding;
+      if (title) {
+        document.title = "🐻 " + title;
+        document.querySelector(".logo span").textContent = title;
+      }
+      if (subtitle) document.querySelector("#subtitle").dataset.brand = subtitle;
+    }
+    // 自定义后台入口：只有路径匹配时才显示管理按钮
+    // 默认 /admin 时为了兼容，在根路径也显示；自定义后仅在自定义路径显示
+    const adminPath = (data.admin_path || "/admin").replace(/\/$/, "") || "/";
+    const curPath = location.pathname.replace(/\/$/, "") || "/";
+    const adminLink = document.querySelector(".admin-link");
+    if (adminLink) {
+      const isDefault = adminPath === "/admin";
+      const show = isDefault ? (curPath === "/" || curPath === "/admin") : (curPath === adminPath);
+      adminLink.style.display = show ? "" : "none";
+    }
+    monitorsCache = monitors;
+    try { localStorage.setItem("probe_mon_count", String(monitors.length)); } catch (e) {}
+    const downList = monitors.filter(m => m.last_status === "down");
+    const allUp = downList.length === 0;
+    const netMonitors = monitors.filter(m => m.type !== "agent");
+    // 只统计已检测过的监控（last_check_at > 0），从未检测的不计入平均
+    const measured = netMonitors.filter(m => m.last_check_at > 0);
+    const avgMs = measured.length ? Math.round(measured.reduce((a, m) => a + (m.last_ms || 0), 0) / measured.length) : null;
+
+    let html = "";
+
+    // 维护横幅
+    const nowTs = Math.floor(Date.now() / 1000);
+    for (const mt of maintenances) {
+      const active = mt.start_at <= nowTs && mt.end_at > nowTs;
+      const upcoming = mt.start_at > nowTs;
+      if (active || upcoming) {
+        const when = active ? tt("maintActive") : tt("maintUpcoming") + " " + new Date(mt.start_at * 1000).toLocaleString(lang === "zh" ? "zh-CN" : "en-US");
+        const endStr = lang === "zh" ? "zh-CN" : "en-US";
+        html += `<div class="maint-banner"><span class="icon">🛠️</span><div>
+          <div class="t">${esc(mt.title)} <span style="font-size:12px;color:var(--yellow)">· ${when}</span></div>
+          <div class="d">${esc(mt.description)}${upcoming ? `（${tt("maintEnds")}：` + new Date(mt.end_at * 1000).toLocaleString(endStr) + "）" : ""}</div>
+        </div></div>`;
+      }
+    }
+
+    html += `<div class="hero ${allUp ? "ok" : "bad"}">
+      <span class="pulse"></span>
+      <span class="icon">${allUp ? "✅" : "🔴"}</span>
+      <div><h2>${allUp ? tt("allOk") : tt("hasDown", downList.length)}</h2>
+      <p>${tt("lastUpdate")} ${new Date().toLocaleTimeString(lang === "zh" ? "zh-CN" : "en-US")} · ${tt("autoCheck")}</p></div>
+    </div>`;
+
+    html += `<div class="stats">
+      <div class="stat"><div class="ico">📊</div><div class="num">${monitors.length}</div><div class="lbl">${tt("total")}</div></div>
+      <div class="stat"><div class="ico">✅</div><div class="num green">${monitors.length - downList.length}</div><div class="lbl">${tt("normal")}</div></div>
+      <div class="stat"><div class="ico">${downList.length ? "🔴" : "⚪"}</div><div class="num ${downList.length ? "red" : ""}">${downList.length}</div><div class="lbl">${tt("down")}</div></div>
+      <div class="stat"><div class="ico">⚡</div><div class="num">${avgMs === null ? "–" : avgMs + '<span style="font-size:14px;color:var(--muted)">ms</span>'}</div><div class="lbl">${tt("avgResp")}</div></div>
+    </div>`;
+
+    if (incidents.length) {
+      const loc = lang === "zh" ? "zh-CN" : "en-US";
+      html += `<div class="section-title">🔴 ${tt("currentIncidents")}</div>`;
+      for (const i of incidents) {
+        html += `<div class="incident"><div class="t">${esc(i.name)}</div><div class="d">${tt("incidentStart")} ${new Date(i.started_at * 1000).toLocaleString(loc)} · ${tt("ongoing")} ${ago(i.started_at)}</div></div>`;
+      }
+    }
+
+    // 按分组展示
+    const groups = {};
+    for (const m of monitors) {
+      const g = m.group_name || tt("groupDefault");
+      if (!groups[g]) groups[g] = [];
+      groups[g].push(m);
+    }
+    const groupNames = Object.keys(groups).sort((a, b) => {
+      if (a === tt("groupDefault")) return 1;
+      if (b === tt("groupDefault")) return -1;
+      return a.localeCompare(b);
+    });
+
+    html += `<div class="section-title">📋 ${tt("serviceList")}</div>`;
+    if (!monitors.length) {
+      const addBtn = adminToken ? `<br><br><button class="btn" onclick="showAdmin('monitors')">${lang === "zh" ? "去添加第一个监控" : "Add your first monitor"}</button>` : "";
+      html += `<div class="card"><div class="empty"><div class="big">📭</div>${tt("noMonitors")}<br><span style="font-size:13px">${tt("noMonitorsSub")}</span>${addBtn}</div></div>`;
+    }
+    const loc2 = lang === "zh" ? "zh-CN" : "en-US";
+    for (const gname of groupNames) {
+      if (groupNames.length > 1 || gname !== tt("groupDefault")) {
+        html += `<div style="font-size:14px;font-weight:600;color:var(--muted);margin:18px 0 10px">📁 ${esc(gname)}</div>`;
+      }
+      for (const m of groups[gname]) {
+        const dot = m.last_status === "up" ? "up" : m.last_status === "down" ? "down" : "unknown";
+        const metaLine = m.type === "agent"
+          ? `🖥️ ${tt("server")} · ${tt("everyNMin", m.interval_minutes)}`
+          : `${esc(m.target)} · ${tt("everyNMin", m.interval_minutes)}`;
+        const rightSide = m.type === "agent"
+          ? `<span style="color:var(--${m.last_status === "up" ? "green" : m.last_status === "down" ? "red" : "muted"});font-size:14px;font-weight:600">${m.last_status === "unknown" ? "–" : m.last_status === "up" ? "● " + tt("online") : "● " + tt("down")}</span>`
+          : `${sparkSvg(m)}<span class="uptime-pct">${m.uptime_7d || "–"}%</span>
+             <span style="color:var(--muted);font-size:13px">${m.last_status === "unknown" ? "–" : m.last_ms + "ms"}</span>`;
+        html += `<div class="mon-card">
+          <div class="mon-head" onclick="toggleDetail(${m.id})">
+            <div class="mon-info"><span class="dot ${dot}"></span>
+              <div><div class="name">${esc(m.name)}</div><div class="meta">${metaLine}</div></div>
+            </div>
+            <div class="mon-right">${rightSide}</div>
+          </div>
+          <div class="mon-detail" id="d-${m.id}"></div>
+        </div>`;
+      }
+    }
+
+    // 历史故障时间线
+    const history = histData.incidents || [];
+    if (history.length) {
+      html += `<div class="section-title">📜 ${tt("history")}</div><div class="card"><div class="timeline">`;
+      for (const h of history) {
+        const dur = h.ended_at - h.started_at;
+        const durStr = dur < 3600 ? Math.floor(dur / 60) + tt("min") : (dur / 3600).toFixed(1) + tt("hour");
+        html += `<div class="timeline-item recovered">
+          <div class="when">${new Date(h.started_at * 1000).toLocaleString(loc2)} · ${tt("duration")}${durStr}</div>
+          <div class="what">${esc(h.name)} ${tt("recovered")}</div>
+        </div>`;
+      }
+      html += `</div></div>`;
+    }
+
+    $("#app").innerHTML = html;
+    const brandSub = $("#subtitle").dataset.brand;
+    $("#subtitle").textContent = (brandSub ? brandSub + " · " : "") + tt("monitorsN", monitors.length);
+    $("#updatetime").textContent = tt("lastUpdate") + " " + new Date().toLocaleString(loc2);
+    // 聚合接口已含曲线和可用率数据，无需额外请求
+  } catch (e) {
+    $("#app").innerHTML = `<div class="card"><div class="empty"><div class="big">⚠️</div>${tt("testFailMsg")}${esc(e.message)}</div></div>`;
+  }
+}
+
+// 响应时间曲线图
+async function loadSparkline(id) {
+  try {
+    const { checks } = await api(`/api/monitors/${id}/checks?limit=50`);
+    const svg = $("#spark-" + id);
+    if (!svg || !checks.length) return;
+    const data = checks.filter(c => c.status === "up").map(c => c.ms);
+    if (data.length < 2) return;
+    const max = Math.max(...data, 1), min = Math.min(...data, 0);
+    const range = max - min || 1;
+    const pts = data.map((v, i) => {
+      const x = (i / (data.length - 1)) * 120;
+      const y = 34 - ((v - min) / range) * 30;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(" ");
+    svg.innerHTML = `<polygon class="area" points="0,36 ${pts} 120,36"/><polyline points="${pts}"/>`;
+  } catch (e) {}
+}
+
+async function loadPct(id) {
+  try {
+    const { uptime } = await api(`/api/monitors/${id}/stats?days=7`);
+    const el = $("#pct-" + id);
+    if (el) { el.textContent = uptime + "%"; el.className = "uptime-pct " + pctClass(uptime); }
+  } catch (e) {}
+}
+
+async function toggleDetail(id) {
+  const el = $("#d-" + id);
+  if (el.classList.contains("open")) { el.classList.remove("open"); return; }
+  document.querySelectorAll(".mon-detail.open").forEach(x => x.classList.remove("open"));
+  el.classList.add("open");
+  el.innerHTML = `<div style="color:var(--muted);font-size:13px">Loading…</div>`;
+  try {
+    const [{ uptime, total, avg_ms }, { checks }] = await Promise.all([
+      api(`/api/monitors/${id}/stats?days=30`),
+      api(`/api/monitors/${id}/checks?limit=90`)
+    ]);
+    const loc = lang === "zh" ? "zh-CN" : "en-US";
+    let bars = "";
+    for (let bi = 0; bi < checks.length; bi++) {
+      const c = checks[bi];
+      const t = new Date(c.checked_at * 1000).toLocaleString(loc, { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+      const stTxt = c.status === "up" ? tt("normal") : tt("down");
+      bars += `<span class="${c.status}" title="${t} · ${c.ms}ms · ${stTxt}" style="cursor:pointer" onclick="showCheckDetail(${bi})"></span>`;
+    }
+    // 点击 uptime 格子弹详情（checks 数据存在闭包外，用全局暂存）
+    window._lastChecks = checks;
+    window._lastChecksLoc = loc;
+    const m = monitorsCache.find(x => x.id === id);
+    // Agent 类型：额外展示 CPU/内存/磁盘曲线
+    let agentHtml = "";
+    if (m && m.type === "agent") {
+      try {
+        const { stats } = await api(`/api/monitors/${id}/agent`);
+        if (stats.length) {
+          const latest = stats[stats.length - 1];
+          const bar = (v, label) => {
+            const c = v > 85 ? "var(--red)" : v > 70 ? "var(--yellow)" : "var(--green)";
+            return `<div style="margin:8px 0"><div style="display:flex;justify-content:space-between;font-size:13px"><span>${label}</span><b style="color:${c}">${v}%</b></div>
+              <div style="background:var(--border);border-radius:6px;height:10px;margin-top:4px"><div style="width:${Math.min(v, 100)}%;background:${c};height:100%;border-radius:6px;transition:width .5s"></div></div></div>`;
+          };
+          const fmtUptime = s => { const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600); return d > 0 ? `${d}${tt("day")}${h}${tt("hour")}` : h > 0 ? `${h}${tt("hour")}` : `${Math.floor(s / 60)}${tt("min")}`; };
+          agentHtml = `<div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
+            <div style="font-size:14px;font-weight:600;margin-bottom:8px">🖥️ ${tt("serverRes", stats.length)}</div>
+            ${bar(latest.cpu, tt("cpu"))} ${bar(latest.mem, tt("mem"))} ${bar(latest.disk, tt("disk"))}
+            <div style="display:flex;gap:16px;margin-top:10px;font-size:12px;color:var(--muted)">
+              <span>${tt("load")} ${latest.load1}</span><span>${tt("uptime")} ${fmtUptime(latest.uptime)}</span><span>${tt("reported")} ${ago(latest.reported_at)}</span>
+            </div>
+            ${latest.ping_telecom || latest.ping_unicom || latest.ping_mobile ? `
+            <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+              <div style="font-size:13px;font-weight:600;margin-bottom:8px">🌐 ${tt("ispPing")}</div>
+              <div style="display:flex;gap:12px;font-size:13px">
+                <span title="${lang === "zh" ? "显示 – 表示该线路 TCP 被拦截或未测到" : "– means blocked or unreachable"}">${tt("ispTelecom")} <b style="color:${latest.ping_telecom > 150 ? "var(--red)" : latest.ping_telecom > 80 ? "var(--yellow)" : "var(--green)"}">${latest.ping_telecom ? latest.ping_telecom + "ms" : "–"}</b></span>
+                <span title="${lang === "zh" ? "显示 – 表示该线路 TCP 被拦截或未测到" : "– means blocked or unreachable"}">${tt("ispUnicom")} <b style="color:${latest.ping_unicom > 150 ? "var(--red)" : latest.ping_unicom > 80 ? "var(--yellow)" : "var(--green)"}">${latest.ping_unicom ? latest.ping_unicom + "ms" : "–"}</b></span>
+                <span title="${lang === "zh" ? "显示 – 表示该线路 TCP 被拦截或未测到" : "– means blocked or unreachable"}">${tt("ispMobile")} <b style="color:${latest.ping_mobile > 150 ? "var(--red)" : latest.ping_mobile > 80 ? "var(--yellow)" : "var(--green)"}">${latest.ping_mobile ? latest.ping_mobile + "ms" : "–"}</b></span>
+              </div>
+              <div style="font-size:11px;color:var(--muted);margin-top:4px">${tt("ispPingTip")}</div>
+            </div>` : ""}</div>`;
+        } else {
+          agentHtml = `<div style="margin-top:16px;padding:14px;background:rgba(59,130,246,.08);border:1px dashed rgba(59,130,246,.3);border-radius:8px;font-size:13px">
+            📡 ${tt("waitingAgent")}<br><span style="color:var(--muted)">${tt("waitingAgentSub")}</span></div>`;
+        }
+      } catch (e) {}
+    }
+    el.innerHTML = `
+      <div class="detail-grid">
+        <div class="item"><div class="v ${pctClass(uptime)}" style="color:var(--${pctClass(uptime) === "good" ? "green" : pctClass(uptime) === "warn" ? "yellow" : "red"})">${uptime}%</div><div class="k">${tt("uptime30d")}</div></div>
+        <div class="item"><div class="v">${total}</div><div class="k">${tt("checks30d")}</div></div>
+        ${m && m.type === "agent"
+          ? `<div class="item"><div class="v">${m.last_check_at ? ago(m.last_check_at) : "–"}</div><div class="k">${tt("reported")}</div></div>`
+          : `<div class="item"><div class="v">${avg_ms}ms</div><div class="k">${tt("avgMs")}</div></div>`}
+      </div>
+      <div style="margin-top:14px;color:var(--muted);font-size:12px">${tt("recentChecks", checks.length)}</div>
+      <div class="uptime-bar">${bars || `<span style="color:var(--muted);font-size:12px">${tt("noData")}</span>`}</div>
+      ${m ? `<div style="color:var(--muted);font-size:12px">${tt("lastCheck")}: ${ago(m.last_check_at)}${m.type === "agent" ? "" : ` · ${m.last_ms}ms`}</div>` : ""}
+      ${agentHtml}`;
+  } catch (e) { el.innerHTML = `<div style="color:var(--red)">Error</div>`; }
+}
+
+// ---------- 管理后台 ----------
+function showAdmin() { adminToken ? showDashboard() : showLogin(); }
+
+function showLogin() {
+  currentView = "admin";
+  $("#app").innerHTML = `<div class="card" style="max-width:420px;margin:60px auto;text-align:center;background:linear-gradient(180deg,var(--card),var(--card2))">
+    <div style="font-size:56px;margin-bottom:16px;filter:drop-shadow(0 4px 12px rgba(59,130,246,.3))">🔐</div>
+    <h2 style="font-size:22px">${tt("login")}</h2>
+    <p style="color:var(--muted);font-size:13px;margin:8px 0 20px">${tt("loginSub")}</p>
+    <input type="password" id="pw" placeholder="${tt("pwPh")}" onkeydown="if(event.key==='Enter')doLogin(event)" style="text-align:center;font-size:16px;padding:12px">
+    <input type="text" id="totp" placeholder="🔢 ${tt("totpPh")}" maxlength="6" inputmode="numeric" onkeydown="if(event.key==='Enter')doLogin(event)" style="text-align:center;font-size:16px;padding:12px;margin-top:10px;display:none">
+    <div style="margin-top:20px;display:flex;gap:10px;justify-content:center">
+      <button class="btn" onclick="doLogin()" style="padding:10px 32px">${tt("loginBtn")}</button>
+      <button class="btn ghost" onclick="loadStatus()">${tt("back")}</button>
+    </div><div id="err" style="color:var(--red);font-size:13px;margin-top:12px;min-height:20px"></div>
+  </div>`;
+  setTimeout(() => $("#pw") && $("#pw").focus(), 100);
+}
+
+async function doLogin() {
+  const pw = $("#pw").value;
+  if (!pw) { $("#err").textContent = lang === "zh" ? "请输入密码" : "Please enter password"; return; }
+  const totpCode = $("#totp")?.value?.trim() || "";
+  try {
+    const body = { password: pw };
+    if (totpCode) body.totp_code = totpCode;
+    const { token } = await api("/api/admin/login", { method: "POST", body: JSON.stringify(body) });
+    adminToken = token; localStorage.setItem("probe_admin", token); showDashboard();
+  } catch (e) {
+    // 如果后端要求 TOTP，显示动态码输入框
+    if (e.message === "动态码错误" || $("#totp").style.display !== "none") {
+      $("#totp").style.display = "";
+      $("#totp").focus();
+    }
+    $("#err").textContent = e.message;
+  }
+}
+function logout() { adminToken = ""; localStorage.removeItem("probe_admin"); loadStatus(); }
+
+// uptime 格子点击弹详情
+function showCheckDetail(idx) {
+  const checks = window._lastChecks || [];
+  const loc = window._lastChecksLoc || "zh-CN";
+  const c = checks[idx];
+  if (!c) return;
+  const t = new Date(c.checked_at * 1000).toLocaleString(loc);
+  const st = c.status === "up" ? "🟢" : "🔴";
+  alert(`${st} ${t}\n${lang === "zh" ? "状态" : "Status"}: ${c.status}\n${lang === "zh" ? "耗时" : "Latency"}: ${c.ms}ms`);
+}
+
+async function showDashboard() {
+  currentView = "admin";
+  $("#app").innerHTML = `<div class="card" style="text-align:center;color:var(--muted)">加载中…</div>`;
+  try {
+    const { monitors } = await api("/api/admin/monitors");
+    monitorsCache = monitors;
+    let rows = "";
+    for (const m of monitors) {
+      const dot = m.last_status === "up" ? "up" : m.last_status === "down" ? "down" : "unknown";
+      const alerts = [m.alert_telegram ? "TG" : "", m.alert_email ? "📧" : "", m.alert_webhook ? "WH" : "", m.alert_dingtalk ? "Ding" : "", m.alert_bark ? "Bark" : "", m.alert_wecom ? "WeCom" : "", m.alert_custom_email ? "Mail" : "", m.alert_smtp ? "SMTP" : "", m.alert_serverchan ? "SChan" : "", m.alert_wxpusher ? "WxP" : "", m.alert_feishu ? "FeiShu" : ""].filter(Boolean).join(" ");
+      rows += `<tr><td><span class="dot ${dot}"></span> ${esc(m.name)}</td>
+        <td><span style="background:var(--bg);padding:2px 8px;border-radius:6px;font-size:12px">${m.type}</span></td>
+        <td style="font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.target)}</td>
+        <td>${m.interval_minutes}分</td><td style="font-size:12px">${alerts || "–"}</td>
+        <td>${m.enabled ? "✅" : "⏸️"}</td>
+        <td style="white-space:nowrap">
+        <div class="dropdown" style="display:inline-block;position:relative">
+          <button class="btn ghost sm" onclick="toggleDropdown(event, ${m.id})">⋯ ${tt("more")}</button>
+          <div class="dropdown-menu" id="dd-${m.id}">
+            <div style="padding:8px 12px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--border);margin-bottom:4px">
+              <div style="font-weight:600;color:var(--text);font-size:13px;margin-bottom:2px">${esc(m.name)}</div>
+              <div>${m.type === "ssl" ? "🔒 SSL 证书监控" : m.type === "http" ? "🌐 HTTP 监控" : m.type === "tcp" ? "🔌 TCP 监控" : "🖥️ Agent 监控"} · ${esc(m.target)}</div>
+              ${m.type === "ssl" ? `<div style="margin-top:4px">💡 证书剩 7 天开始告警</div>` : ""}
+            </div>
+            ${m.type === "agent" ? `<button class="dd-item" onclick="showAgentGuide(${m.id},'${m.agent_token || ""}','${esc(m.name).replace(/'/g, "\\'")}')"><span class="dd-icon">📥</span>${tt("deploy")}</button>` : ""}
+            ${m.type === "agent" ? (m.net_blocked
+              ? `<button class="dd-item" onclick="toggleIsolate(${m.id},0,'${esc(m.name).replace(/'/g, "\\'")}')"><span class="dd-icon">🔌</span>${lang === "zh" ? "恢复网络" : "Restore"}</button>`
+              : `<button class="dd-item dd-danger" onclick="toggleIsolate(${m.id},1,'${esc(m.name).replace(/'/g, "\\'")}')"><span class="dd-icon">⛔</span>${lang === "zh" ? "断网" : "Isolate"}</button>`) : ""}
+            ${m.type === "agent" ? `<div class="dd-divider"></div>` : ""}
+            <button class="dd-item" onclick="testMonitor(event, ${m.id})"><span class="dd-icon">🧪</span>${tt("test")}</button>
+            <button class="dd-item" onclick="editMonitor(${m.id})"><span class="dd-icon">✏️</span>${tt("edit")}</button>
+            <div class="dd-divider"></div>
+            <button class="dd-item dd-danger" onclick="delMonitor(${m.id})"><span class="dd-icon">🗑️</span>${tt("del")}</button>
+          </div>
+        </div></td></tr>`;
+    }
+    $("#app").innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:12px">
+        <div>
+          <h2 style="font-size:22px;margin:0">📋 ${tt("dashboard")}</h2>
+          <p style="color:var(--muted);font-size:13px;margin:4px 0 0">${tt("monitorsN", monitors.length)} · ${tt("enabledN", monitors.filter(m => m.enabled).length)}</p>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn" onclick="editMonitor(0)">${tt("addMonitor")}</button>
+          <button class="btn ghost" onclick="showMaintenances()">${tt("maintenance")}</button>
+          <button class="btn ghost" onclick="showSettings()">${tt("alertSettings")}</button>
+          <button class="btn ghost" onclick="showLogs()">📝 ${tt("logs")}</button>
+          <button class="btn ghost" onclick="showVisitors()">👥 访客</button>
+          <button class="btn ghost" onclick="loadStatus()">${tt("preview")}</button>
+          <button class="btn ghost" onclick="logout()">${tt("logout")}</button>
+        </div>
+      </div>
+      <div class="card" style="padding:0;overflow-x:auto"><table style="min-width:760px">
+        <tr><th>${tt("name")}</th><th>${tt("type")}</th><th>${tt("target")}</th><th>${tt("freq")}</th><th>${tt("alert")}</th><th>${tt("statusCol")}</th><th>${tt("ops")}</th></tr>
+        ${rows || `<tr><td colspan="7"><div class="empty"><div class="big">📭</div>${tt("noMonitors")}</div></td></tr>`}
+      </table></div><div id="form"></div>`;
+  } catch (e) {
+    if (e.message === "未授权" || e.message === "Unauthorized") { logout(); showLogin(); }
+    else $("#app").innerHTML = `<div class="card">Error: ${esc(e.message)}</div>`;
+  }
+}
+
+async function editMonitor(id) {
+  let m = { name: "", type: "http", target: "", interval_minutes: 5, group_name: "", keyword: "", expected_status: 200, enabled: 1, alert_telegram: 0, alert_email: 0, alert_webhook: 0, webhook_url: "", alert_dingtalk: 0, alert_bark: 0, alert_wecom: 0, alert_custom_email: 0, alert_smtp: 0, alert_serverchan: 0, alert_wxpusher: 0, alert_feishu: 0, ssh_threshold: 0, conn_threshold: 0, process_watch: "", ssl_domains: "", expire_at: 0 };
+  if (id) { const { monitors } = await api("/api/admin/monitors"); m = monitors.find(x => x.id === id) || m; }
+  window._editingMonitor = m; // 暂存，供 saveMonitor 在切换类型时保留阈值
+  $("#form").innerHTML = `<div class="card"><h2>${id ? tt("editMonitor") : tt("addMonitorTitle")} ${tt("dashboard")}</h2>
+    <div class="row"><div><label>${tt("monitorName")}</label><input id="f-name" value="${esc(m.name)}" placeholder="${tt("namePh")}"></div>
+    <div><label>${tt("type")}</label><select id="f-type">
+      <option value="http"${m.type === "http" ? " selected" : ""}>${tt("typeHttp")}</option>
+      <option value="tcp"${m.type === "tcp" ? " selected" : ""}>${tt("typeTcp")}</option>
+      <option value="ssl"${m.type === "ssl" ? " selected" : ""}>${tt("typeSsl")}</option>
+      <option value="agent"${m.type === "agent" ? " selected" : ""}>${tt("typeAgent")}</option>
+    </select></div></div>
+    <div id="agent-tip" style="display:${m.type === "agent" ? "block" : "none"};background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.3);border-radius:8px;padding:12px;margin-top:12px;font-size:13px;color:var(--text)">
+      💡 ${tt("agentTip")}<br>
+      <span style="color:var(--muted)">${tt("agentTipSub")}</span>
+    </div>
+    <div class="row"><div><label>${tt("targetLabel")}</label><input id="f-target" value="${esc(m.target)}" placeholder="${tt("targetPhHttp")}"><div id="target-help" style="font-size:12px;color:var(--muted);margin-top:6px">${tt("targetHelpHttp")}</div></div>
+    <div><label>${tt("groupLabel")}</label><input id="f-group" value="${esc(m.group_name || "")}" placeholder="${tt("groupPh")}"></div></div>
+    <div class="row"><div><label>${tt("expireLabel")}</label><input id="f-expire" type="date" value="${m.expire_at ? (() => { const d = new Date(m.expire_at * 1000); const p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; })() : ""}"></div><div></div></div>
+    <div class="row"><div><label>${tt("freqLabel")}</label><select id="f-interval">
+      ${[[1, tt("freq1")], [5, tt("freq5")], [15, tt("freq15")], [30, tt("freq30")], [60, tt("freq60")]].map(([v, t]) => `<option value="${v}"${m.interval_minutes === v ? " selected" : ""}>${t}</option>`).join("")}
+    </select></div>
+    <div id="http-code-box" style="display:${m.type === "http" ? "block" : "none"}"><label>${tt("expectCode")}</label><input id="f-status" type="number" value="${m.expected_status}" placeholder="200"></div></div>
+    <div id="http-keyword-box" style="display:${m.type === "http" ? "block" : "none"}"><label>${tt("keyword")}</label><input id="f-keyword" value="${esc(m.keyword)}" placeholder="${tt("keywordPh")}"></div>
+    <div id="threshold-box" style="display:${m.type === "agent" ? "block" : "none"}">
+      <label style="margin-top:16px;font-weight:600;color:var(--text)">${tt("thresholdTitle")}</label>
+      <div class="row">
+        <div><label>${tt("cpuTh")}</label><input id="f-cpu" type="number" min="0" max="100" value="${m.cpu_threshold || 0}" placeholder="90"></div>
+        <div><label>${tt("memTh")}</label><input id="f-mem" type="number" min="0" max="100" value="${m.mem_threshold || 0}" placeholder="90"></div>
+        <div><label>${tt("diskTh")}</label><input id="f-disk" type="number" min="0" max="100" value="${m.disk_threshold || 0}" placeholder="85"></div>
+      </div>
+      <p style="color:var(--muted);font-size:12px;margin-top:6px">💡 ${tt("thresholdTip")}</p>
+      <div style="margin-top:8px"><label>${tt("sshTh")}</label><input id="f-ssh" type="number" min="0" max="1000" value="${m.ssh_threshold || 0}" placeholder="10"></div>
+      <p style="color:var(--muted);font-size:12px;margin-top:6px">💡 ${tt("sshTip")}</p>
+      <div class="row" style="margin-top:8px">
+        <div><label>🌐 TCP 连接数阈值（0=不告警）</label><input id="f-conn" type="number" min="0" max="100000" value="${m.conn_threshold || 0}" placeholder="5000"></div>
+        <div><label>🔍 关键进程监控（逗号分隔）</label><input id="f-procs" type="text" value="${esc(m.process_watch || "")}" placeholder="nginx,docker,mysql"></div>
+      </div>
+      <div style="margin-top:8px"><label>🔒 SSL 证书检查域名（逗号分隔，留空不检查）</label><input id="f-ssldom" type="text" value="${esc(m.ssl_domains || "")}" placeholder="example.com,api.example.com"></div>
+      <p style="color:var(--muted);font-size:12px;margin-top:6px">💡 连接数突增可能是 CC 攻击；关键进程停止会立即告警；SSL 证书剩 7 天开始提醒</p>
+    </div>
+    <label>${tt("alertMethod")}</label><div class="checkbox-row">
+      <label><input type="checkbox" id="f-tg"${m.alert_telegram ? " checked" : ""}> ${tt("tg")}</label>
+      <label><input type="checkbox" id="f-em"${m.alert_email ? " checked" : ""}> ${tt("email")}</label>
+      <label><input type="checkbox" id="f-wh"${m.alert_webhook ? " checked" : ""}> ${tt("webhook")}</label>
+      <label><input type="checkbox" id="f-ding"${m.alert_dingtalk ? " checked" : ""}> ${tt("dingtalk")}</label>
+      <label><input type="checkbox" id="f-bark"${m.alert_bark ? " checked" : ""}> ${tt("bark")}</label>
+      <label><input type="checkbox" id="f-wecom"${m.alert_wecom ? " checked" : ""}> ${tt("wecom")}</label>
+      <label><input type="checkbox" id="f-cem"${m.alert_custom_email ? " checked" : ""}> ${tt("customEmail")}</label>
+      <label><input type="checkbox" id="f-smtp"${m.alert_smtp ? " checked" : ""}> ${tt("smtp")}</label>
+      <label><input type="checkbox" id="f-sc"${m.alert_serverchan ? " checked" : ""}> ${tt("serverchan")}</label>
+      <label><input type="checkbox" id="f-wxp"${m.alert_wxpusher ? " checked" : ""}> ${tt("wxpusher")}</label>
+      <label><input type="checkbox" id="f-fs"${m.alert_feishu ? " checked" : ""}> ${tt("feishu")}</label>
+      <label><input type="checkbox" id="f-en"${m.enabled ? " checked" : ""}> ${tt("enableMon")}</label>
+    </div>
+    <label>${tt("webhookUrl")}</label><input id="f-whurl" value="${esc(m.webhook_url)}" placeholder="https://...">
+    <div style="margin-top:18px;display:flex;gap:10px"><button class="btn" onclick="saveMonitor(event, ${id})">${tt("save")}</button>
+    <button class="btn ghost" onclick="$('#form').innerHTML=''">${tt("cancel")}</button></div>
+  </div>`;
+  $("#form").scrollIntoView({ behavior: "smooth" });
+  $("#f-type").onchange = e => {
+    const t = e.target.value;
+    const isAgent = t === "agent";
+    const isHttp = t === "http";
+    $("#agent-tip").style.display = isAgent ? "block" : "none";
+    $("#threshold-box").style.display = isAgent ? "block" : "none";
+    $("#http-code-box").style.display = isHttp ? "block" : "none";
+    $("#http-keyword-box").style.display = isHttp ? "block" : "none";
+    // 按类型更新目标输入框的提示
+    const phMap = { http: tt("targetPhHttp"), tcp: tt("targetPhTcp"), ssl: tt("targetPhSsl"), agent: tt("targetPhAgent") };
+    const helpMap = { http: tt("targetHelpHttp"), tcp: tt("targetHelpTcp"), ssl: tt("targetHelpSsl"), agent: tt("targetHelpAgent") };
+    $("#f-target").placeholder = phMap[t] || "";
+    $("#target-help").textContent = helpMap[t] || "";
+  };
+}
+
+async function saveMonitor(event, id) {
+  const btn = event.target;
+  const oldText = btn.textContent;
+  btn.textContent = lang === "zh" ? "保存中…" : "Saving…";
+  btn.disabled = true;
+  try {
+  const b = {
+    name: $("#f-name").value.trim(), type: $("#f-type").value, target: $("#f-target").value.trim(),
+    group_name: $("#f-group").value.trim(),
+    interval_minutes: parseInt($("#f-interval").value, 10),
+    // 非 HTTP 类型时关键词和状态码用默认值
+    keyword: $("#f-type").value === "http" ? $("#f-keyword").value.trim() : "",
+    expected_status: $("#f-type").value === "http" ? (parseInt($("#f-status").value, 10) || 200) : 200,
+    enabled: $("#f-en").checked ? 1 : 0,
+    alert_telegram: $("#f-tg").checked, alert_email: $("#f-em").checked, alert_webhook: $("#f-wh").checked,
+    webhook_url: $("#f-whurl").value.trim(),
+    alert_dingtalk: $("#f-ding").checked, alert_bark: $("#f-bark").checked, alert_wecom: $("#f-wecom").checked, alert_custom_email: $("#f-cem").checked,
+    alert_smtp: $("#f-smtp").checked, alert_serverchan: $("#f-sc").checked, alert_wxpusher: $("#f-wxp").checked, alert_feishu: $("#f-fs").checked,
+    expire_at: $("#f-expire").value ? Math.floor(new Date($("#f-expire").value + "T00:00:00").getTime() / 1000) : 0,
+    // 非 agent 类型时输入框不存在，沿用原值而非清零
+    ssh_threshold: $("#f-ssh") ? (parseInt($("#f-ssh").value, 10) || 0) : (window._editingMonitor?.ssh_threshold || 0),
+    cpu_threshold: $("#f-cpu") ? (parseInt($("#f-cpu").value, 10) || 0) : (window._editingMonitor?.cpu_threshold || 0),
+    mem_threshold: $("#f-mem") ? (parseInt($("#f-mem").value, 10) || 0) : (window._editingMonitor?.mem_threshold || 0),
+    disk_threshold: $("#f-disk") ? (parseInt($("#f-disk").value, 10) || 0) : (window._editingMonitor?.disk_threshold || 0),
+    conn_threshold: $("#f-conn") ? (parseInt($("#f-conn").value, 10) || 0) : (window._editingMonitor?.conn_threshold || 0),
+    process_watch: $("#f-procs") ? ($("#f-procs").value.trim() || "") : (window._editingMonitor?.process_watch || ""),
+    ssl_domains: $("#f-ssldom") ? ($("#f-ssldom").value.trim() || "") : (window._editingMonitor?.ssl_domains || "")
+  };
+  if (!b.name) { alert(tt("nameRequired")); return; }
+  if (b.type !== "agent" && !b.target) { alert(tt("targetRequired")); return; }
+    let r;
+    if (id) {
+      await api(`/api/admin/monitors/${id}`, { method: "PUT", body: JSON.stringify(b) });
+      showDashboard();
+    } else {
+      r = await api("/api/admin/monitors", { method: "POST", body: JSON.stringify(b) });
+      await showDashboard();
+      if (b.type === "agent" && r.agent_token) {
+        setTimeout(() => showAgentGuide(r.id, r.agent_token, b.name), 300);
+      }
+    }
+  } catch (e) { alert(tt("saveFail") + e.message); }
+  finally { btn.textContent = oldText; btn.disabled = false; }
+}
+
+// 下拉菜单切换
+function toggleDropdown(event, id) {
+  event.stopPropagation();
+  const menu = $("#dd-" + id);
+  const isOpen = menu.style.display !== "none";
+  // 先关掉所有
+  document.querySelectorAll(".dropdown-menu").forEach(m => m.style.display = "none");
+  menu.style.display = isOpen ? "none" : "block";
+}
+// 点其他地方关闭下拉菜单
+document.addEventListener("click", () => {
+  document.querySelectorAll(".dropdown-menu").forEach(m => m.style.display = "none");
+});
+
+async function delMonitor(id) {
+  if (!confirm(tt("confirmDel"))) return;
+  try {
+    await api(`/api/admin/monitors/${id}`, { method: "DELETE" });
+    showDashboard();
+  } catch (e) { alert(tt("delFail") + e.message); }
+}
+
+function showAgentGuide(id, token, name) {
+  const installCron = `(command -v crontab >/dev/null 2>&1 || (command -v apt-get >/dev/null 2>&1 && sudo apt-get update -qq && sudo apt-get install -y -qq cron) || (command -v dnf >/dev/null 2>&1 && sudo dnf install -y -q cronie) || (command -v yum >/dev/null 2>&1 && sudo yum install -y -q cronie) || echo "WARN: no cron found") && (sudo systemctl enable --now crond 2>/dev/null || sudo systemctl enable --now cron 2>/dev/null || true)`;
+  const installer = `curl -sSL ${location.origin}/agent.py -o /tmp/probe-agent.py && sudo mkdir -p /opt && sudo mv /tmp/probe-agent.py /opt/probe-agent.py && sudo sed -i 's|AGENT_TOKEN = ".*"|AGENT_TOKEN = "${token}"|' /opt/probe-agent.py && ${installCron} && (crontab -l 2>/dev/null | grep -v probe-agent; echo "*/1 * * * * /usr/bin/python3 /opt/probe-agent.py >> /var/log/probe-agent.log 2>&1") | crontab - && sudo touch /var/log/probe-agent.log && sudo chmod 666 /var/log/probe-agent.log && echo "OK"`;
+  $("#form").innerHTML = `<div class="card">
+    <h2>${tt("deployGuide")} — ${esc(name)}</h2>
+    <p style="color:var(--muted);font-size:13px;margin:8px 0">${tt("deployDesc")}</p>
+    <div style="display:flex;gap:8px"><input readonly value="${esc(installer)}" id="ag-install" style="font-family:monospace;font-size:11px"><button class="btn sm" onclick="copyText('ag-install')">${tt("copy")}</button></div>
+    <div style="margin-top:16px;padding:12px;background:rgba(59,130,246,.08);border-radius:8px;font-size:13px;color:var(--muted)">
+      💡 ${tt("deployTip1")}<br>
+      ${tt("deployVerify")}<code style="font-size:12px">tail /var/log/probe-agent.log</code><br>
+      ${tt("deployUninstall")}<code style="font-size:12px">crontab -l | grep -v probe-agent | crontab - && sudo rm /opt/probe-agent.py</code>
+    </div>
+    <div style="margin-top:12px">
+      <details style="font-size:13px;color:var(--muted)"><summary style="cursor:pointer">${tt("tokenManual")}</summary>
+      <div style="display:flex;gap:8px;margin-top:8px"><input readonly value="${esc(token)}" id="ag-token" style="font-family:monospace;font-size:12px"><button class="btn ghost sm" onclick="copyText('ag-token')">${tt("copy")}</button></div>
+      <div style="margin-top:8px"><button class="btn ghost sm" onclick="regenToken(${id},'${esc(name).replace(/'/g, "\\'")}')">${tt("regenToken")}</button></div></details>
+    </div>
+    <div style="margin-top:14px"><button class="btn ghost" onclick="$('#form').innerHTML=''">${tt("close")}</button></div>
+  </div>`;
+  $("#form").scrollIntoView({ behavior: "smooth" });
+}
+
+async function showMaintenances() {
+  const { maintenances } = await api("/api/admin/maintenances");
+  const loc = lang === "zh" ? "zh-CN" : "en-US";
+  let rows = "";
+  for (const mt of maintenances) {
+    const stMap = { scheduled: tt("stScheduled"), ongoing: tt("stOngoing"), completed: tt("stCompleted"), cancelled: tt("stCancelled") };
+    rows += `<tr><td>${esc(mt.title)}</td>
+      <td style="font-size:12px">${new Date(mt.start_at * 1000).toLocaleString(loc)}<br>→ ${new Date(mt.end_at * 1000).toLocaleString(loc)}</td>
+      <td>${stMap[mt.status] || mt.status}</td>
+      <td style="white-space:nowrap"><button class="btn ghost sm" onclick="editMaintenance(${mt.id})">${tt("edit")}</button>
+      <button class="btn danger sm" onclick="delMaintenance(${mt.id})">${tt("del")}</button></td></tr>`;
+  }
+  $("#form").innerHTML = `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <h2>${tt("maintTitle")}</h2><button class="btn sm" onclick="editMaintenance(0)">${tt("maintNew")}</button></div>
+    <p style="color:var(--muted);font-size:13px;margin-bottom:12px">${tt("maintDesc")}</p>
+    <table><tr><th>${tt("maintThTitle")}</th><th>${tt("maintThTime")}</th><th>${tt("maintThStatus")}</th><th>${tt("maintThOps")}</th></tr>
+    ${rows || `<tr><td colspan="4"><div class="empty">${tt("noMaint")}</div></td></tr>`}</table>
+    <div style="margin-top:12px"><button class="btn ghost sm" onclick="$('#form').innerHTML=''">${tt("close")}</button></div></div>`;
+  $("#form").scrollIntoView({ behavior: "smooth" });
+}
+
+async function editMaintenance(id) {
+  let mt = { title: "", description: "", start_at: 0, end_at: 0, status: "scheduled" };
+  if (id) {
+    const { maintenances } = await api("/api/admin/maintenances");
+    mt = maintenances.find(x => x.id === id) || mt;
+  }
+  const toLocal = ts => {
+    if (!ts) return "";
+    const d = new Date(ts * 1000);
+    const pad = n => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+  $("#form").innerHTML = `<div class="card"><h2>${id ? tt("maintEdit") : tt("maintAdd")}${tt("maintTitle").replace("🛠️ ", "")}</h2>
+    <label>${tt("maintThTitle")} *</label><input id="mt-title" value="${esc(mt.title)}" placeholder="${tt("maintNamePh")}">
+    <label>${tt("maintThTitle") === "标题" ? "说明" : "Description"}</label><textarea id="mt-desc" rows="2" placeholder="${tt("maintDescPh")}">${esc(mt.description)}</textarea>
+    <div class="row"><div><label>${tt("maintStart")}</label><input id="mt-start" type="datetime-local" value="${toLocal(mt.start_at)}"></div>
+    <div><label>${tt("maintEnd")}</label><input id="mt-end" type="datetime-local" value="${toLocal(mt.end_at)}"></div></div>
+    <label>${tt("maintThStatus")}</label><select id="mt-status">
+      <option value="scheduled"${mt.status === "scheduled" ? " selected" : ""}>${tt("stScheduled")}</option>
+      <option value="ongoing"${mt.status === "ongoing" ? " selected" : ""}>${tt("stOngoing")}</option>
+      <option value="completed"${mt.status === "completed" ? " selected" : ""}>${tt("stCompleted")}</option>
+      <option value="cancelled"${mt.status === "cancelled" ? " selected" : ""}>${tt("stCancelled")}</option>
+    </select>
+    <div style="margin-top:16px;display:flex;gap:10px"><button class="btn" onclick="saveMaintenance(event, ${id})">${tt("save")}</button>
+    <button class="btn ghost" onclick="showMaintenances()">${tt("back")}</button></div></div>`;
+}
+
+async function saveMaintenance(event, id) {
+  const btn = event.target;
+  const oldText = btn.textContent;
+  btn.textContent = lang === "zh" ? "保存中…" : "Saving…";
+  btn.disabled = true;
+  try {
+  const toTs = v => Math.floor(new Date(v).getTime() / 1000);
+  const b = {
+    title: $("#mt-title").value.trim(), description: $("#mt-desc").value.trim(),
+    start_at: toTs($("#mt-start").value), end_at: toTs($("#mt-end").value),
+    status: $("#mt-status").value
+  };
+  if (!b.title || !b.start_at || !b.end_at) { alert(tt("maintTitleReq")); return; }
+  if (b.end_at <= b.start_at) { alert(tt("maintTimeErr")); return; }
+    id ? await api(`/api/admin/maintenances/${id}`, { method: "PUT", body: JSON.stringify(b) })
+       : await api("/api/admin/maintenances", { method: "POST", body: JSON.stringify(b) });
+    showMaintenances();
+  } catch (e) { alert(tt("saveFail") + e.message); }
+  finally { btn.textContent = oldText; btn.disabled = false; }
+}
+
+async function delMaintenance(id) {
+  if (!confirm(tt("maintDelConfirm"))) return;
+  try {
+    await api(`/api/admin/maintenances/${id}`, { method: "DELETE" });
+    showMaintenances();
+  } catch (e) { alert(tt("delFail") + e.message); }
+}
+
+function copyText(id) {
+  const el = $("#" + id);
+  el.select(); el.setSelectionRange(0, 99999);
+  document.execCommand("copy");
+  if (navigator.clipboard) navigator.clipboard.writeText(el.value).catch(() => {});
+}
+
+async function regenToken(id, name) {
+  if (!confirm(tt("regenConfirm"))) return;
+  try {
+    const { agent_token } = await api(`/api/admin/monitors/${id}/regen-token`, { method: "POST" });
+    alert(tt("regenOk") + "\n\nsudo sed -i 's|AGENT_TOKEN = \".*\"|AGENT_TOKEN = \"" + agent_token + "\"|' /opt/probe-agent.py");
+    showAgentGuide(id, agent_token, name);
+  } catch (e) { alert(tt("testFailMsg") + e.message); }
+}
+
+async function testMonitor(event, id) {
+  const btn = event.target; btn.textContent = tt("testing"); btn.disabled = true;
+  try {
+    const r = await api(`/api/admin/test/${id}`, { method: "POST" });
+    const m = monitorsCache.find(x => x.id === id);
+    const detail = (m && m.type === "agent") ? r.detail : `ms: ${r.ms}\n${r.detail}`;
+    alert(`${r.status === "up" ? tt("testOk") : tt("testFail")}\n\n${detail}`);
+    // 测试不改变监控状态，无需重载后台（避免清空正在编辑的表单）
+  } catch (e) { alert(tt("testFailMsg") + e.message); }
+  finally { btn.textContent = tt("test"); btn.disabled = false; }
+}
+
+async function showLogs() {
+  const { logs } = await api("/api/admin/logs");
+  const loc = lang === "zh" ? "zh-CN" : "en-US";
+  const actionMap = lang === "zh"
+    ? { login_ok: "✅ 登录", login_fail: "❌ 登录失败", login_blocked: "🚫 登录被锁", password_set: "🔑 设置密码", monitor_add: "➕ 添加监控", monitor_edit: "✏️ 编辑监控", monitor_del: "🗑️ 删除监控", settings_save: "⚙️ 保存设置", change_pw_ok: "🔐 修改密码", change_pw_fail: "❌ 改密码失败", net_isolate: "⛔ 一键断网", net_restore: "🔌 恢复网络", ssh_autoban: "🚫 SSH 自动封禁", visitor_toggle: "👥 访客记录开关", test_alert: "🧪 测试告警" }
+    : { login_ok: "✅ Login", login_fail: "❌ Login failed", login_blocked: "🚫 Login locked", password_set: "🔑 Password set", monitor_add: "➕ Monitor added", monitor_edit: "✏️ Monitor edited", monitor_del: "🗑️ Monitor deleted", settings_save: "⚙️ Settings saved", change_pw_ok: "🔐 Password changed", change_pw_fail: "❌ Password change failed", net_isolate: "⛔ Network isolated", net_restore: "🔌 Network restored", ssh_autoban: "🚫 SSH auto-ban", visitor_toggle: "👥 Visitor log toggled", test_alert: "🧪 Test alert" };
+  let rows = "";
+  for (const l of logs) {
+    rows += `<tr><td style="font-size:12px;white-space:nowrap">${new Date(l.created_at * 1000).toLocaleString(loc)}</td><td>${actionMap[l.action] || esc(l.action)}</td><td>${esc(l.detail)}</td><td style="font-size:12px">${esc(l.ip)}</td></tr>`;
+  }
+  $("#form").innerHTML = `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <h2>📝 ${tt("logs")}</h2><button class="btn ghost sm" onclick="$('#form').innerHTML=''">${tt("close")}</button></div>
+    <div style="overflow-x:auto"><table style="min-width:600px"><tr><th>${tt("logTime")}</th><th>${tt("logAction")}</th><th>${tt("logDetail")}</th><th>IP</th></tr>
+    ${rows || `<tr><td colspan="4"><div class="empty">${tt("noLogs")}</div></td></tr>`}</table></div></div>`;
+}
+
+async function toggleIsolate(id, action, name) {
+  const isIsolate = action === 1;
+  const title = isIsolate ? (lang === "zh" ? "⛔ 一键断网" : "⛔ Isolate Network") : (lang === "zh" ? "🔌 恢复网络" : "🔌 Restore Network");
+  const desc = isIsolate
+    ? (lang === "zh"
+      ? `确定对「<b>${esc(name)}</b>」执行一键断网吗？<br><br>• 将屏蔽该服务器所有<strong style="color:var(--red)">入站</strong>连接<br>• 保留 SSH 22 端口和探针心跳上报<br>• Agent 下次上报（1 分钟内）生效<br><br><span style="color:var(--muted);font-size:12px">⚠️ 仅建议在遭受 DDoS/CC 攻击等紧急情况下使用</span>`
+      : `Isolate <b>${esc(name)}</b> from network?<br><br>• Blocks all <strong style="color:var(--red)">inbound</strong> connections<br>• Keeps SSH port 22 and probe heartbeat<br>• Takes effect on next agent report (within 1 min)<br><br><span style="color:var(--muted);font-size:12px">⚠️ For emergency use only (e.g. under DDoS/CC attack)</span>`)
+    : (lang === "zh"
+      ? `确定恢复「<b>${esc(name)}</b>」的网络吗？<br><br>Agent 下次上报（1 分钟内）解除隔离。`
+      : `Restore network for <b>${esc(name)}</b>?<br><br>Takes effect on next agent report (within 1 min).`);
+  const okText = isIsolate ? (lang === "zh" ? "确认断网" : "Confirm") : (lang === "zh" ? "确认恢复" : "Confirm");
+  const cancelText = lang === "zh" ? "取消" : "Cancel";
+  showModal(`<div class="card" style="max-width:420px;margin:0">
+    <h3 style="font-size:16px;margin-bottom:12px">${title}</h3>
+    <div style="font-size:14px;line-height:1.7;margin-bottom:18px">${desc}</div>
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn ghost" style="width:auto;padding:8px 20px" onclick="closeModal()">${cancelText}</button>
+      <button class="btn" id="isolate-ok" style="width:auto;padding:8px 20px;${isIsolate ? "background:var(--red)" : ""}" onclick="doIsolate(${id},${action})">${okText}</button>
+    </div></div>`);
+}
+
+async function doIsolate(id, action) {
+  const btn = document.getElementById("isolate-ok");
+  if (btn) { btn.disabled = true; btn.textContent = lang === "zh" ? "执行中…" : "Working…"; }
+  try {
+    await api(`/api/admin/monitors/${id}/isolate`, { method: "POST", body: JSON.stringify({ action: action === 1 ? "isolate" : "restore" }) });
+    closeModal();
+    showDashboard();
+  } catch (e) {
+    alert(e.message);
+    closeModal();
+  }
+}
+
+async function showVisitors() {
+  const { daily, recent, suspicious, enabled } = await api("/api/admin/visitors?days=7");
+  const loc = lang === "zh" ? "zh-CN" : "en-US";
+  let dailyRows = "";
+  for (const d of daily) {
+    dailyRows += `<tr><td>${d.d}</td><td>${d.pv}</td><td>${d.uv}</td></tr>`;
+  }
+  let susHtml = "";
+  if (suspicious.length) {
+    susHtml = `<div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:12px;margin-bottom:12px">
+      <b style="color:var(--red)">${tt("susIp")}</b><br>
+      ${suspicious.map(s => `<code style="font-size:12px">${esc(s.ip_hash)} (${s.c} 次)</code>`).join("<br>")}
+    </div>`;
+  }
+  let recentRows = "";
+  for (const r of recent) {
+    recentRows += `<tr><td style="font-size:12px;white-space:nowrap">${r.t}</td><td><code style="font-size:11px">${esc(r.ip_hash)}</code></td><td>${esc(r.country || "–")}</td><td style="font-size:12px">${esc(r.path)}</td><td>${esc(r.device)}</td></tr>`;
+  }
+  $("#form").innerHTML = `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <h2>${tt("visitorTitle")}</h2>
+    <div style="display:flex;gap:8px">
+      <button class="btn ghost sm" onclick="toggleVisitorLog()">${enabled === false ? (lang === "zh" ? "开启记录" : "Enable") : (lang === "zh" ? "关闭记录" : "Disable")}</button>
+      <button class="btn ghost sm" onclick="$('#form').innerHTML=''">${tt("close")}</button>
+    </div></div>
+    ${susHtml}
+    <h3 style="font-size:14px;margin:12px 0 8px">${tt("dailyStats")}</h3>
+    <div style="overflow-x:auto;margin-bottom:16px"><table style="min-width:400px"><tr><th>${tt("date")}</th><th>PV</th><th>UV</th></tr>
+    ${dailyRows || `<tr><td colspan="3"><div class="empty">${tt("noData")}</div></td></tr>`}</table></div>
+    <h3 style="font-size:14px;margin:12px 0 8px">${tt("recentVisits")}</h3>
+    <div style="overflow-x:auto"><table style="min-width:600px"><tr><th>${tt("time")}</th><th>${tt("ipHash")}</th><th>${tt("country")}</th><th>${tt("path")}</th><th>${tt("device")}</th></tr>
+    ${recentRows || `<tr><td colspan="5"><div class="empty">${tt("noData")}</div></td></tr>`}</table></div>
+    <p style="font-size:11px;color:var(--muted);margin-top:12px">${tt("visitorNote")}</p>
+  </div>`;
+}
+
+async function toggleVisitorLog() {
+  const cur = await api("/api/admin/visitors?days=1").catch(() => ({}));
+  const enabled = cur.enabled !== false;
+  const msg = lang === "zh" 
+    ? (enabled ? "确定关闭访客记录吗？" : "确定开启访客记录吗？")
+    : (enabled ? "Disable visitor logging?" : "Enable visitor logging?");
+  if (!confirm(msg)) return;
+  await api("/api/admin/visitors/toggle", { method: "POST", body: JSON.stringify({ enabled: !enabled }) });
+  showVisitors();
+}
+
+async function showSettings() {
+  const { settings } = await api("/api/admin/settings");
+  $("#form").innerHTML = `<div class="card"><h2>${tt("settingsTitle")}</h2>
+    <p style="color:var(--muted);font-size:13px;margin:6px 0 4px">${tt("settingsDesc")}</p>
+    <label style="margin-top:16px;font-weight:600;color:var(--text)">${tt("brandTitle")}</label>
+    <div class="row"><div><label>${tt("siteTitle")}</label><input id="s-title" value="${esc(settings.site_title || "")}" placeholder="${tt("siteTitlePh")}"></div>
+    <div><label>${tt("siteSubtitle")}</label><input id="s-subtitle" value="${esc(settings.site_subtitle || "")}" placeholder="${tt("siteSubtitlePh")}"></div></div>
+    <div class="row"><div><label>${tt("adminPath")}</label><input id="s-adminpath" value="${esc(settings.admin_path || "/admin")}" placeholder="/admin"></div>
+    <div><label style="visibility:hidden">_</label><div style="font-size:12px;color:var(--muted);padding:8px 0">${tt("adminPathDesc")}</div></div></div>
+    <label style="margin-top:16px;font-weight:600;color:var(--text);display:flex;justify-content:space-between;align-items:center">${tt("tgTitle")}<button class="btn ghost sm" style="width:auto;padding:4px 12px;font-size:12px" onclick="testAlert('telegram',this)">${lang==="zh"?"测试":"Test"}</button></label>
+    <div class="row"><div><label>${tt("tgToken")}</label><input id="s-tg" value="${esc(settings.telegram_bot_token || "")}" placeholder="${tt("tgTokenPh")}"></div>
+    <div><label>${tt("tgChatId")}</label><input id="s-tgc" value="${esc(settings.telegram_chat_id || "")}" placeholder="${tt("tgChatIdPh")}"></div></div>
+    <label style="margin-top:16px;font-weight:600;color:var(--text);display:flex;justify-content:space-between;align-items:center">${tt("emailTitle")}<button class="btn ghost sm" style="width:auto;padding:4px 12px;font-size:12px" onclick="testAlert('email',this)">${lang==="zh"?"测试":"Test"}</button></label>
+    <div class="row"><div><label>${tt("resendKey")}</label><input id="s-re" value="${esc(settings.resend_api_key || "")}" placeholder="${tt("resendKeyPh")}"></div>
+    <div><label>${tt("fromEmail")}</label><input id="s-from" value="${esc(settings.alert_email_from || "")}" placeholder="${tt("fromEmailPh")}"></div></div>
+    <label>${tt("toEmail")}</label><input id="s-to" value="${esc(settings.alert_email_to || "")}" placeholder="${tt("toEmailPh")}">
+    <p style="color:var(--muted);font-size:12px;margin-top:8px">💡 ${tt("subEmailNote")}</p>
+    <label style="margin-top:16px;font-weight:600;color:var(--text);display:flex;justify-content:space-between;align-items:center">${tt("dingTitle")}<button class="btn ghost sm" style="width:auto;padding:4px 12px;font-size:12px" onclick="testAlert('dingtalk',this)">${lang==="zh"?"测试":"Test"}</button></label>
+    <label>${tt("dingWebhook")}</label><input id="s-ding" value="${esc(settings.dingtalk_webhook || "")}" placeholder="${tt("dingWebhookPh")}">
+    <label style="margin-top:16px;font-weight:600;color:var(--text);display:flex;justify-content:space-between;align-items:center">${tt("barkTitle")}<button class="btn ghost sm" style="width:auto;padding:4px 12px;font-size:12px" onclick="testAlert('bark',this)">${lang==="zh"?"测试":"Test"}</button></label>
+    <label>${tt("barkUrl")}</label><input id="s-bark" value="${esc(settings.bark_url || "")}" placeholder="${tt("barkUrlPh")}">
+    <label style="margin-top:16px;font-weight:600;color:var(--text);display:flex;justify-content:space-between;align-items:center">${tt("wecomTitle")}<button class="btn ghost sm" style="width:auto;padding:4px 12px;font-size:12px" onclick="testAlert('wecom',this)">${lang==="zh"?"测试":"Test"}</button></label>
+    <label>${tt("wecomWebhook")}</label><input id="s-wecom" value="${esc(settings.wecom_webhook || "")}" placeholder="${tt("wecomWebhookPh")}">
+    <label style="margin-top:16px;font-weight:600;color:var(--text);display:flex;justify-content:space-between;align-items:center">${tt("cemTitle")}<button class="btn ghost sm" style="width:auto;padding:4px 12px;font-size:12px" onclick="testAlert('custom_email',this)">${lang==="zh"?"测试":"Test"}</button></label>
+    <label>${tt("cemUrl")}</label><input id="s-cemurl" value="${esc(settings.custom_email_url || "")}" placeholder="${tt("cemUrlPh")}">
+    <label>${tt("cemHeaders")}</label><input id="s-cemh" value="${esc(settings.custom_email_headers || "")}" placeholder='${tt("cemHeadersPh")}'>
+    <div class="row"><div><label>${tt("cemFrom")}</label><input id="s-cemfrom" value="${esc(settings.custom_email_from || "")}" placeholder="${tt("cemFromPh")}"></div>
+    <div><label>${tt("cemTo")}</label><input id="s-cemto" value="${esc(settings.custom_email_to || "")}" placeholder="${tt("cemToPh")}"></div></div>
+    <p style="color:var(--muted);font-size:12px;margin-top:8px">💡 ${tt("cemNote")}</p>
+    <label style="margin-top:16px;font-weight:600;color:var(--text);display:flex;justify-content:space-between;align-items:center">${tt("smtpTitle")}<button class="btn ghost sm" style="width:auto;padding:4px 12px;font-size:12px" onclick="testAlert('smtp',this)">${lang==="zh"?"测试":"Test"}</button></label>
+    <p style="color:var(--muted);font-size:12px;margin:4px 0">⚠️ ${tt("smtpNote")}</p>
+    <div class="row"><div><label>${tt("smtpHost")}</label><input id="s-smtph" value="${esc(settings.smtp_host || "")}" placeholder="smtp.qiye.aliyun.com"></div>
+    <div><label>${tt("smtpPort")}</label><input id="s-smtpp" value="${esc(settings.smtp_port || "587")}" placeholder="587"></div></div>
+    <div class="row"><div><label>${tt("smtpUser")}</label><input id="s-smtpu" value="${esc(settings.smtp_user || "")}" placeholder="user@domain.com"></div>
+    <div><label>${tt("smtpPass")}</label><input id="s-smtppw" type="password" value="" placeholder="${tt("smtpPassPh")}"></div></div>
+    <div class="row"><div><label>${tt("smtpFrom")}</label><input id="s-smtpf" value="${esc(settings.smtp_from || "")}" placeholder="${tt("smtpFromPh")}"></div>
+    <div><label>${tt("smtpTo")}</label><input id="s-smtpt" value="${esc(settings.smtp_to || "")}" placeholder="${tt("smtpToPh")}"></div></div>
+    <label>${tt("smtpSecure")}</label><select id="s-smtps">
+      <option value="auto"${(!settings.smtp_secure || settings.smtp_secure === "auto") ? " selected" : ""}>auto</option>
+      <option value="tls"${settings.smtp_secure === "tls" ? " selected" : ""}>TLS (465)</option>
+      <option value="starttls"${settings.smtp_secure === "starttls" ? " selected" : ""}>STARTTLS (587)</option>
+      <option value="off"${settings.smtp_secure === "off" ? " selected" : ""}>off</option>
+    </select>
+    <label style="margin-top:16px;font-weight:600;color:var(--text);display:flex;justify-content:space-between;align-items:center">${tt("scTitle")}<button class="btn ghost sm" style="width:auto;padding:4px 12px;font-size:12px" onclick="testAlert('serverchan',this)">${lang==="zh"?"测试":"Test"}</button></label>
+    <label>${tt("scSendkey")}</label><input id="s-sc" value="${esc(settings.serverchan_sendkey || "")}" placeholder="SCTxxxxxxxxxxxxxxxx（sctapi.ftqq.com 获取）">
+    <label style="margin-top:16px;font-weight:600;color:var(--text);display:flex;justify-content:space-between;align-items:center">${tt("wxpTitle")}<button class="btn ghost sm" style="width:auto;padding:4px 12px;font-size:12px" onclick="testAlert('wxpusher',this)">${lang==="zh"?"测试":"Test"}</button></label>
+    <label>${tt("wxpSpt")}</label><input id="s-wxp" value="${esc(settings.wxpusher_spt || "")}" placeholder="wxpusher.zjiecode.com 获取">
+    <label style="margin-top:16px;font-weight:600;color:var(--text);display:flex;justify-content:space-between;align-items:center">${tt("fsTitle")}<button class="btn ghost sm" style="width:auto;padding:4px 12px;font-size:12px" onclick="testAlert('feishu',this)">${lang==="zh"?"测试":"Test"}</button></label>
+    <label>${tt("fsWebhook")}</label><input id="s-fs" value="${esc(settings.feishu_webhook || "")}" placeholder="${tt("fsWebhookPh")}">
+    <label style="margin-top:16px;font-weight:600;color:var(--text)">${tt("expTitle")}</label>
+    <label>${tt("expDays")}</label><input id="s-expd" type="number" min="1" max="90" value="${esc(settings.expire_alert_days || "7")}" placeholder="7">
+    <label style="margin-top:16px;font-weight:600;color:var(--text)">🔐 ${tt("changePw")}</label>
+    <div class="row"><div><label>${tt("oldPw")}</label><input id="s-oldpw" type="password"></div>
+    <div><label>${tt("newPw")}</label><input id="s-newpw" type="password" placeholder="${tt("newPwTip")}"></div></div>
+    <div class="row"><div><label>${tt("confirmPw")}</label><input id="s-confirmpw" type="password"></div>
+    <div style="display:flex;align-items:flex-end"><button class="btn" onclick="changePassword()">${tt("changePwBtn")}</button></div></div>
+    <label style="margin-top:16px;font-weight:600;color:var(--text)">🔐 ${tt("totpTitle")}</label>
+    <div id="totp-section"><div style="color:var(--muted);font-size:13px">${tt("loading")}</div></div>
+    <div style="margin-top:18px;display:flex;gap:10px"><button class="btn" onclick="saveSettings(event)">${tt("save")}</button>
+    <button class="btn ghost" onclick="$('#form').innerHTML=''">${tt("cancel")}</button></div>
+    <p style="color:var(--muted);font-size:12px;margin-top:12px">💡 ${tt("tokenKeyNote")}</p>
+  </div>`;
+  $("#form").scrollIntoView({ behavior: "smooth" });
+  loadTotpSection();
+}
+
+// TOTP 设置区域
+async function loadTotpSection() {
+  const el = $("#totp-section");
+  if (!el) return;
+  try {
+    const { enabled } = await api("/api/admin/totp/status");
+    if (enabled) {
+      el.innerHTML = `<div style="display:flex;align-items:center;gap:10px">
+        <span style="color:var(--green)">✅ ${tt("totpEnabled")}</span>
+        <button class="btn ghost sm" onclick="disableTotp()">${tt("totpDisable")}</button>
+      </div>`;
+    } else {
+      el.innerHTML = `<div style="color:var(--muted);font-size:13px;margin-bottom:8px">${tt("totpDesc")}</div>
+        <button class="btn ghost sm" onclick="setupTotp()">${tt("totpSetup")}</button>
+        <div id="totp-qr" style="margin-top:12px"></div>`;
+    }
+  } catch (e) { el.innerHTML = `<span style="color:var(--red)">${e.message}</span>`; }
+}
+async function setupTotp() {
+  try {
+    const { secret, otpauth } = await api("/api/admin/totp/setup", { method: "POST" });
+    // 用二维码 API 生成二维码
+    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(otpauth)}`;
+    $("#totp-qr").innerHTML = `<div style="margin-top:8px">
+      <img src="${qrUrl}" style="border:8px solid #fff;border-radius:8px" alt="QR" onerror="this.style.display='none';document.getElementById('totp-manual').style.display='block'">
+      <div id="totp-manual" style="display:none;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px;font-size:12px;color:var(--muted)">⚠️ 二维码加载失败，请在验证器 App 中手动添加：<br>密钥：<code style="user-select:all;color:var(--text)">${secret}</code></div>
+      <div style="font-size:12px;color:var(--muted);margin:8px 0">${tt("totpManual")}<code style="user-select:all">${secret}</code></div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="totp-code" placeholder="${tt("totpPh")}" maxlength="6" inputmode="numeric" style="width:140px;text-align:center">
+        <button class="btn sm" onclick="enableTotp()">${tt("totpEnable")}</button>
+      </div></div>`;
+  } catch (e) { alert(e.message); }
+}
+async function enableTotp() {
+  const code = $("#totp-code")?.value?.trim();
+  if (!code) return alert(tt("totpPh"));
+  try {
+    await api("/api/admin/totp/enable", { method: "POST", body: JSON.stringify({ code }) });
+    alert(tt("totpEnabled"));
+    loadTotpSection();
+  } catch (e) { alert(e.message); }
+}
+async function disableTotp() {
+  const pw = prompt(tt("totpDisablePw"));
+  if (!pw) return;
+  try {
+    await api("/api/admin/totp/disable", { method: "POST", body: JSON.stringify({ password: pw }) });
+    alert(tt("totpDisabled"));
+    loadTotpSection();
+  } catch (e) { alert(e.message); }
+}
+
+async function changePassword() {
+  const oldPw = $("#s-oldpw").value, newPw = $("#s-newpw").value, cfmPw = $("#s-confirmpw").value;
+  if (!oldPw || !newPw || !cfmPw) return alert(tt("fillAll"));
+  if (newPw.length < 10) return alert(tt("pwTooShort"));
+  if (newPw !== cfmPw) return alert(tt("pwMismatch"));
+  try {
+    const r = await api("/api/admin/change-password", { method: "POST", body: JSON.stringify({ oldPassword: oldPw, newPassword: newPw }) });
+    localStorage.setItem("probe_admin", r.token);
+    adminToken = r.token; // 同步更新内存 token，否则后续请求全 401
+    $("#s-oldpw").value = $("#s-newpw").value = $("#s-confirmpw").value = "";
+    alert(tt("pwChanged"));
+  } catch (e) { alert(e.message); }
+}
+
+async function saveSettings(event) {
+  const btn = event.target;
+  const oldText = btn.textContent;
+  btn.textContent = lang === "zh" ? "保存中…" : "Saving…";
+  btn.disabled = true;
+  try {
+  const b = {
+    site_title: $("#s-title").value.trim(), site_subtitle: $("#s-subtitle").value.trim(),
+    admin_path: (() => { let p = $("#s-adminpath").value.trim() || "/admin"; if (!p.startsWith("/")) p = "/" + p; if (p === "/") { alert(tt("adminPathInvalid")); throw new Error("invalid"); } return p; })(),
+    telegram_bot_token: $("#s-tg").value.trim(), telegram_chat_id: $("#s-tgc").value.trim(),
+    resend_api_key: $("#s-re").value.trim(), alert_email_from: $("#s-from").value.trim(),
+    alert_email_to: $("#s-to").value.trim(),
+    dingtalk_webhook: $("#s-ding").value.trim(), bark_url: $("#s-bark").value.trim(),
+    wecom_webhook: $("#s-wecom").value.trim(),
+    custom_email_url: $("#s-cemurl").value.trim(), custom_email_headers: $("#s-cemh").value.trim(),
+    custom_email_from: $("#s-cemfrom").value.trim(), custom_email_to: $("#s-cemto").value.trim(),
+    smtp_host: $("#s-smtph").value.trim(), smtp_port: $("#s-smtpp").value.trim(),
+    smtp_user: $("#s-smtpu").value.trim(), smtp_from: $("#s-smtpf").value.trim(), smtp_to: $("#s-smtpt").value.trim(),
+    smtp_secure: $("#s-smtps").value,
+    serverchan_sendkey: $("#s-sc").value.trim(), wxpusher_spt: $("#s-wxp").value.trim(),
+    feishu_webhook: $("#s-fs").value.trim(), expire_alert_days: $("#s-expd").value.trim()
+  };
+  const _smtppw = $("#s-smtppw").value.trim();
+  if (_smtppw) b.smtp_pass = _smtppw;
+  await api("/api/admin/settings", { method: "PUT", body: JSON.stringify(b) });
+  alert(tt("saveOk"));
+  // 保存后重新加载表单显示已保存的值，而非清空
+  showSettings();
+  } catch (e) { alert(tt("saveFail") + e.message); }
+  finally { btn.textContent = oldText; btn.disabled = false; }
+}
+
+async function testAlert(channel, btn) {
+  const oldText = btn.textContent;
+  btn.textContent = lang === "zh" ? "保存并发送中…" : "Saving & sending…";
+  btn.disabled = true;
+  try {
+    // 先静默保存当前表单配置，再测试（避免测的是旧配置）
+    const b = {
+      site_title: $("#s-title").value.trim(), site_subtitle: $("#s-subtitle").value.trim(),
+      telegram_bot_token: $("#s-tg").value.trim(), telegram_chat_id: $("#s-tgid").value.trim(),
+      resend_api_key: $("#s-rk").value.trim(), alert_email_from: $("#s-from").value.trim(),
+      alert_email_to: $("#s-to").value.trim(),
+      dingtalk_webhook: $("#s-ding").value.trim(), bark_url: $("#s-bark").value.trim(),
+      wecom_webhook: $("#s-wecom").value.trim(),
+      custom_email_url: $("#s-cemurl").value.trim(), custom_email_headers: $("#s-cemh").value.trim(),
+      custom_email_from: $("#s-cemfrom").value.trim(), custom_email_to: $("#s-cemto").value.trim(),
+      smtp_host: $("#s-smtph").value.trim(), smtp_port: $("#s-smtpp").value.trim(),
+      smtp_user: $("#s-smtpu").value.trim(), smtp_from: $("#s-smtpf").value.trim(), smtp_to: $("#s-smtpt").value.trim(),
+      smtp_secure: $("#s-smtps").value,
+      serverchan_sendkey: $("#s-sc").value.trim(), wxpusher_spt: $("#s-wxp").value.trim(),
+      feishu_webhook: $("#s-fs").value.trim(), expire_alert_days: $("#s-expd").value.trim()
+    };
+    const _smtppw = $("#s-smtppw").value.trim();
+    if (_smtppw) b.smtp_pass = _smtppw;
+    await api("/api/admin/settings", { method: "PUT", body: JSON.stringify(b) });
+    const r = await api("/api/admin/test-alert", { method: "POST", body: JSON.stringify({ channel }) });
+    if (r.error) throw new Error(r.error);
+    alert(lang === "zh" ? "✅ 配置已保存，测试消息已发送，请检查是否收到" : "✅ Settings saved, test message sent, please check");
+  } catch (e) {
+    alert((lang === "zh" ? "❌ 发送失败：" : "❌ Failed: ") + e.message);
+  } finally {
+    btn.textContent = oldText;
+    btn.disabled = false;
+  }
+}
+
+async function doSubscribe() {
+  const email = $("#sub-email").value.trim();
+  const msg = $("#sub-msg");
+  if (!email) { msg.textContent = tt("enterEmail"); msg.style.color = "var(--red)"; return; }
+  msg.textContent = tt("sending"); msg.style.color = "var(--muted)";
+  try {
+    const r = await api("/api/subscribe", { method: "POST", body: JSON.stringify({ email }) });
+    msg.textContent = "✅ " + (r.code === "already" ? tt("subscribed") : tt("subscribeOk")); msg.style.color = "var(--green)";
+    $("#sub-email").value = "";
+  } catch (e) { msg.textContent = "❌ " + e.message; msg.style.color = "var(--red)"; }
+}
+
+// 加载品牌信息
+async function loadBranding() {
+  try {
+    const { title, subtitle } = await api("/api/branding");
+    if (title) {
+      document.title = "🐻 " + title;
+      document.querySelector(".logo span").textContent = title;
+    } else {
+      document.title = "🐻 " + tt("status");
+      document.querySelector(".logo span").textContent = tt("status");
+    }
+    if (subtitle) $("#subtitle").dataset.brand = subtitle;
+  } catch (e) {
+    document.querySelector(".logo span").textContent = tt("status");
+  }
+  $("#lang-btn").textContent = lang === "zh" ? "EN" : "中文";
+  $("#admin-link-txt").textContent = tt("admin");
+  // 订阅区
+  const subTitle = document.querySelector("footer div div div");
+  if (subTitle) subTitle.textContent = "📬 " + tt("subscribe");
+  const subInput = $("#sub-email");
+  if (subInput) subInput.placeholder = tt("subscribePh");
+  const subBtn = document.querySelector("footer button");
+  if (subBtn) subBtn.textContent = tt("subscribeBtn");
+}
+
+// loadStatus 聚合接口已含品牌信息，无需单独调 loadBranding
+loadStatus();
+// 自动刷新：只在状态页时刷新，进了后台就停；标签页不可见时暂停，切回来立即刷一次
+setInterval(() => { if (currentView === "status" && !document.hidden) loadStatus(); }, 60000);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && currentView === "status") loadStatus();
+});
+</script>
+</body>
+</html>
