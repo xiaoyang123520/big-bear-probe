@@ -720,8 +720,8 @@ if (body.host_info) {
 }
 // 更新最后上报时间（复用 last_check_at 字段）
 await db.prepare(`UPDATE monitors SET last_check_at=? WHERE id=?`).bind(ts, m.id).run();
-// 只保留 7 天的 agent 数据
-await db.prepare(`DELETE FROM agent_stats WHERE reported_at < ?`).bind(ts - 7 * 86400).run();
+// 只保留 35 天的 agent 数据（要覆盖整月，供本月流量统计取月初基线）
+await db.prepare(`DELETE FROM agent_stats WHERE reported_at < ?`).bind(ts - 35 * 86400).run();
 // ---------- 资源阈值告警 ----------
 try {
   const state = JSON.parse(m.agent_alert_state || "{}");
