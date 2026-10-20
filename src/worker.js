@@ -895,7 +895,15 @@ if (body.ts && body.sig) {
   const expected = await hmacSha256(token, String(body.ts));
   if (expected !== body.sig) return json({ error: "invalid signature" }, 401);
 }
-await db.prepare(`UPDATE monitors SET bench_result=?, bench_at=?, bench_requested=0 WHERE id=?`).bind(JSON.stringify(body.result || {}), now(), m.id).run();
+// 结果入库前白名单清洗：只留四项指标且全数强制转数字/布尔，防 agent 回传内容注入公开页面
+const rawBench = body.result || {};
+const bnum = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+const cleanBench = {};
+if (rawBench.cpu) cleanBench.cpu = { score: bnum(rawBench.cpu.score), ms: bnum(rawBench.cpu.ms) };
+if (rawBench.disk) cleanBench.disk = { read: bnum(rawBench.disk.read), write: bnum(rawBench.disk.write) };
+if (rawBench.speed) cleanBench.speed = { download: bnum(rawBench.speed.download), upload: bnum(rawBench.speed.upload) };
+if (rawBench.unlock) cleanBench.unlock = { netflix: !!rawBench.unlock.netflix, chatgpt: !!rawBench.unlock.chatgpt, youtube: !!rawBench.unlock.youtube, disney: !!rawBench.unlock.disney, tiktok: !!rawBench.unlock.tiktok };
+await db.prepare(`UPDATE monitors SET bench_result=?, bench_at=?, bench_requested=0 WHERE id=?`).bind(JSON.stringify(cleanBench), now(), m.id).run();
 try { await adminLog(db, "bench_done", `${m.name} 完成一键体检`, "agent"); } catch (e) {}
 return json({ ok: true });
 }
