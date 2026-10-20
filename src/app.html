@@ -694,7 +694,7 @@ async function toggleDetail(id) {
           // 主机配置 / 价格到期 / 流量（借鉴 Kokoro）
           let hi = {}; try { hi = JSON.parse(m.host_info || "{}"); } catch (e) {}
           const specLine = [hi.cpu_model, hi.cores ? hi.cores + tt("coreUnit") : "", hi.mem_mb ? (hi.mem_mb >= 1024 ? (hi.mem_mb / 1024).toFixed(1) + " GB" : hi.mem_mb + " MB") + " RAM" : "", hi.disk_gb ? hi.disk_gb + " GB 💾" : "", hi.os, hi.virt].filter(Boolean).join(" · ");
-          const specHtml = specLine ? `<div style="font-size:12px;color:var(--muted);margin-top:10px">💻 ${esc(specLine)}</div>` : "";
+          const specHtml = specLine ? `<div style="font-size:12px;color:var(--muted);margin-top:10px">💻 ${tt("hostSpec")}：${esc(specLine)}</div>` : "";
           const daysLeftN = m.expire_at ? Math.ceil((m.expire_at - Date.now() / 1000) / 86400) : null;
           const priceHtml = (m.price_text || m.expire_at) ? `<div style="font-size:12px;color:var(--muted);margin-top:4px">${m.price_text ? "💰 " + esc(m.price_text) : ""}${m.expire_at ? `${m.price_text ? " · " : ""}⏰ ${new Date(m.expire_at * 1000).toLocaleDateString(loc)}（${daysLeftN >= 0 ? tt("daysLeft", daysLeftN) : tt("expiredTxt")}）` : ""}</div>` : "";
           const trafficHtml = m.traffic ? `<div style="font-size:12px;color:var(--muted);margin-top:4px">📶 ↑ ${m.traffic.tx_mbps} Mbps · ↓ ${m.traffic.rx_mbps} Mbps · ${tt("todayTraffic")} ${fmtBytes(m.traffic.today.rx + m.traffic.today.tx)} · ${tt("monthTraffic")} ${fmtBytes(m.traffic.month.rx + m.traffic.month.tx)}</div>` : "";
@@ -721,16 +721,17 @@ async function toggleDetail(id) {
           try {
             const { stats: hist } = await api(`/api/monitors/${id}/agent/history?hours=24`);
             if (hist && hist.length >= 2) {
+              const hasPing = hist.some(s => (s.ping_telecom || 0) > 0 || (s.ping_unicom || 0) > 0 || (s.ping_mobile || 0) > 0);
               chartHtml = `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
                 <div style="font-size:13px;font-weight:600;margin-bottom:6px">📈 ${tt("chartRes")} · CPU / ${tt("mem")}</div>
                 ${sparkLine(hist.map(s => s.cpu), "#3b82f6", 100)}
                 ${sparkLine(hist.map(s => s.mem), "#22c55e", 100)}
                 <div style="font-size:11px;color:var(--muted)"><span style="color:#3b82f6">— CPU</span> · <span style="color:#22c55e">— ${tt("mem")}</span></div>
-                <div style="font-size:13px;font-weight:600;margin:10px 0 6px">🌐 ${tt("ispPing")}</div>
+                ${hasPing ? `<div style="font-size:13px;font-weight:600;margin:10px 0 6px">🌐 ${tt("ispPing")}</div>
                 ${sparkLine(hist.map(s => s.ping_telecom || null), "#f59e0b")}
                 ${sparkLine(hist.map(s => s.ping_unicom || null), "#06b6d4")}
                 ${sparkLine(hist.map(s => s.ping_mobile || null), "#a855f7")}
-                <div style="font-size:11px;color:var(--muted)"><span style="color:#f59e0b">— ${tt("ispTelecom")}</span> · <span style="color:#06b6d4">— ${tt("ispUnicom")}</span> · <span style="color:#a855f7">— ${tt("ispMobile")}</span></div>
+                <div style="font-size:11px;color:var(--muted)"><span style="color:#f59e0b">— ${tt("ispTelecom")}</span> · <span style="color:#06b6d4">— ${tt("ispUnicom")}</span> · <span style="color:#a855f7">— ${tt("ispMobile")}</span></div>` : ""}
               </div>`;
             }
           } catch (e) {}
