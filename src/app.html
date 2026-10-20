@@ -287,7 +287,7 @@ zh: {
   hostSpec: "主机配置", todayTraffic: "今日流量", monthTraffic: "本月流量", coreUnit: "核",
   chartRes: "近 24 小时曲线", benchReport: "🧪 体检报告", benchCpu: "CPU 跑分", benchDisk: "磁盘读 / 写", benchSpeed: "下行 / 上行", benchUnlock: "流媒体解锁（粗测）", unlockNote: "连通性粗测，仅供参考",
   priceLabel: "价格（可选，如 $16.93/月）", daysLeft: n => `剩余 ${n} 天`, expiredTxt: "已过期",
-  benchBtn: "一键体检", benchQueued: "已下发，Agent 下次上报时执行（约 1 分钟出结果）",
+  benchBtn: "一键体检", benchQueued: "已下发，Agent 下次上报时执行（约 1 分钟出结果）", benchPending: "体检已下发，等待执行",
   ispTelecom: "电信", ispUnicom: "联通", ispMobile: "移动",
   logs: "操作日志", logTime: "时间", logAction: "操作", logDetail: "详情", noLogs: "暂无日志",
   changePw: "修改管理员密码", oldPw: "旧密码", newPw: "新密码", newPwTip: "至少 10 位", confirmPw: "确认新密码",
@@ -384,7 +384,7 @@ en: {
   hostSpec: "Host Specs", todayTraffic: "Today", monthTraffic: "This month", coreUnit: " cores",
   chartRes: "Last 24 hours", benchReport: "🧪 Benchmark", benchCpu: "CPU score", benchDisk: "Disk read / write", benchSpeed: "Down / Up", benchUnlock: "Streaming unlock (approx.)", unlockNote: "Reachability check, approximate only",
   priceLabel: "Price (optional, e.g. $16.93/mo)", daysLeft: n => `${n} days left`, expiredTxt: "Expired",
-  benchBtn: "Benchmark", benchQueued: "Queued. The agent will run it on next report (~1 min)",
+  benchBtn: "Benchmark", benchQueued: "Queued. The agent will run it on next report (~1 min)", benchPending: "Benchmark queued…",
   ispTelecom: "Telecom", ispUnicom: "Unicom", ispMobile: "Mobile",
   logs: "Logs", logTime: "Time", logAction: "Action", logDetail: "Detail", noLogs: "No logs",
   changePw: "Change Admin Password", oldPw: "Old password", newPw: "New password", newPwTip: "At least 10 chars", confirmPw: "Confirm new password",
@@ -703,14 +703,15 @@ async function toggleDetail(id) {
           try {
             const b = JSON.parse(m.bench_result || "{}");
             if (b && (b.cpu || b.disk || b.speed)) {
+              const bn = v => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
               const un = b.unlock || {};
               const chip = ok => ok ? "✅" : "❌";
               benchHtml = `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
                 <div style="font-size:13px;font-weight:600;margin-bottom:8px">${tt("benchReport")}${m.bench_at ? ` <span style="font-weight:400;color:var(--muted);font-size:12px">${ago(m.bench_at)}</span>` : ""}</div>
                 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;font-size:13px">
-                  ${b.cpu ? `<div>${tt("benchCpu")}<br><b style="font-size:16px">${b.cpu.score}</b></div>` : ""}
-                  ${b.disk ? `<div>${tt("benchDisk")}<br><b style="font-size:16px">${b.disk.read} / ${b.disk.write}</b> MB/s</div>` : ""}
-                  ${b.speed ? `<div>${tt("benchSpeed")}<br><b style="font-size:16px">${b.speed.download} / ${b.speed.upload}</b> Mbps</div>` : ""}
+                  ${b.cpu ? `<div>${tt("benchCpu")}<br><b style="font-size:16px">${bn(b.cpu.score)}</b></div>` : ""}
+                  ${b.disk ? `<div>${tt("benchDisk")}<br><b style="font-size:16px">${bn(b.disk.read)} / ${bn(b.disk.write)}</b> MB/s</div>` : ""}
+                  ${b.speed ? `<div>${tt("benchSpeed")}<br><b style="font-size:16px">${bn(b.speed.download)} / ${bn(b.speed.upload)}</b> Mbps</div>` : ""}
                 </div>
                 ${b.unlock ? `<div style="font-size:12px;margin-top:8px;color:var(--muted)">${tt("benchUnlock")}：Netflix ${chip(un.netflix)} · ChatGPT ${chip(un.chatgpt)} · YouTube ${chip(un.youtube)} · Disney+ ${chip(un.disney)} · TikTok ${chip(un.tiktok)}<br>${tt("unlockNote")}</div>` : ""}
               </div>`;
@@ -876,7 +877,9 @@ async function showDashboard() {
               ? `<button class="dd-item" onclick="toggleIsolate(${m.id},0,'${esc(m.name).replace(/'/g, "\\'")}')"><span class="dd-icon">🔌</span>${lang === "zh" ? "恢复网络" : "Restore"}</button>`
               : `<button class="dd-item dd-danger" onclick="toggleIsolate(${m.id},1,'${esc(m.name).replace(/'/g, "\\'")}')"><span class="dd-icon">⛔</span>${lang === "zh" ? "断网" : "Isolate"}</button>`) : ""}
             ${m.type === "agent" ? `<div class="dd-divider"></div>` : ""}
-            ${m.type === "agent" ? `<button class="dd-item" onclick="runBench(${m.id},'${esc(m.name).replace(/'/g, "\\'")}')"><span class="dd-icon">🧪</span>${tt("benchBtn")}</button>` : ""}
+            ${m.type === "agent" ? (m.bench_requested
+              ? `<button class="dd-item" disabled style="opacity:.55;cursor:default"><span class="dd-icon">⏳</span>${tt("benchPending")}</button>`
+              : `<button class="dd-item" onclick="runBench(${m.id},'${esc(m.name).replace(/'/g, "\\'")}')"><span class="dd-icon">🧪</span>${tt("benchBtn")}</button>`) : ""}
             ${m.type === "agent" ? `<div class="dd-divider"></div>` : ""}
             ${m.type !== "agent" ? `<button class="dd-item" onclick="testMonitor(event, ${m.id})"><span class="dd-icon">🧪</span>${tt("test")}</button>` : ""}
             <button class="dd-item" onclick="editMonitor(${m.id})"><span class="dd-icon">✏️</span>${tt("edit")}</button>
