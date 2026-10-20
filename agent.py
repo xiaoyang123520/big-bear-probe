@@ -95,6 +95,70 @@ def ping_isp():
     return result
 
 
+def read_net_totals():
+    """累计流量（字节）：/proc/net/dev 全部非 lo 网卡求和，配合服务端差值算今日/本月流量"""
+    total_rx, total_tx = 0, 0
+    try:
+        with open("/proc/net/dev", errors="ignore") as f:
+            for line in f.readlines()[2:]:
+                parts = line.split()
+                if len(parts) < 10:
+                    continue
+                iface = parts[0].rstrip(":")
+                if iface == "lo":
+                    continue
+                total_rx += int(parts[1])
+                total_tx += int(parts[9])
+    except Exception:
+        pass
+    return total_rx, total_tx
+
+
+def read_host_info():
+    """主机配置（静态信息）：CPU 型号/核数、内存/磁盘总量、系统、虚拟化、架构"""
+    import os, platform
+    info = {}
+    try:
+        with open("/proc/cpuinfo", errors="ignore") as f:
+            for line in f:
+                if line.lower().startswith("model name"):
+                    info["cpu_model"] = line.split(":", 1)[1].strip()
+                    break
+    except Exception:
+        pass
+    info["cores"] = os.cpu_count() or 0
+    try:
+        with open("/proc/meminfo", errors="ignore") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    info["mem_mb"] = int(line.split()[1]) // 1024
+                    break
+    except Exception:
+        pass
+    try:
+        u = shutil.disk_usage("/")
+        info["disk_gb"] = round(u.total / 1e9, 1)
+    except Exception:
+        pass
+    try:
+        with open("/etc/os-release", errors="ignore") as f:
+            for line in f:
+                if line.startswith("PRETTY_NAME="):
+                    info["os"] = line.split("=", 1)[1].strip().strip('"')
+                    break
+    except Exception:
+        pass
+    try:
+        import subprocess
+        r = subprocess.run(["systemd-detect-virt"], capture_output=True, text=True, timeout=3)
+        v = (r.stdout or "").strip()
+        info["virt"] = v if v and v != "none" else ""
+    except Exception:
+        info["virt"] = ""
+    info["arch"] = platform.machine()
+    return info
+
+
 def read_ssh_attacks():
     """统计 10 分钟内 SSH 失败登录次数和 Top IP
     支持 /var/log/auth.log (Debian) 和 /var/log/secure (RHEL)
@@ -353,6 +417,136 @@ def is_isolated():
     return os.path.exists("/tmp/probe_isolated")
 
 
+def bench_cpu():
+    """CPU 跑分：固定工作量计时，分数越高越快（相对分数，跨机器可比）"""
+    import time
+    x = 0.0
+    t0 = time.time()
+    for i in range(2000000):
+        x += (i * 1103515245 % 123457) * 0.000001
+        x = x * 1.0000001 + 0.5
+    elapsed = time.time() - t0
+    return {"score": round(2000 / elapsed) if elapsed > 0 else 0, "ms": round(elapsed * 1000)}
+
+
+def bench_disk():
+    """磁盘顺序 IO：写/读 128MB 临时文件计时（MB/s）"""
+    import os, time
+    path = "/tmp/probe_bench_io.bin"
+    chunk = b"\0" * (1024 * 1024)
+    write_mbps = read_mbps = 0
+    try:
+        t0 = time.time()
+        with open(path, "wb") as f:
+            for _ in range(128):
+                f.write(chunk)
+            f.flush()
+            os.fsync(f.fileno())
+        write_mbps = round(128 / (time.time() - t0), 1)
+        t0 = time.time()
+        with open(path, "rb") as f:
+            while f.read(1024 * 1024):
+                pass
+        read_mbps = round(128 / (time.time() - t0), 1)
+    except Exception:
+        pass
+    finally:
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+    return {"write": write_mbps, "read": read_mbps}
+
+
+def bench_speed():
+    """网络测速：Cloudflare speed endpoint（下行拉 25MB / 上行推 10MB，15 秒封顶）"""
+    import time
+    dl = ul = 0
+    try:
+        t0 = time.time()
+        got = 0
+        req = urllib.request.Request("https://speed.cloudflare.com/__down?bytes=25000000",
+                                     headers={"User-Agent": "ProbeAgent/1.0"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            while True:
+                buf = r.read(262144)
+                if not buf:
+                    break
+                got += len(buf)
+                if time.time() - t0 > 15:
+                    break
+        dt = time.time() - t0
+        if dt > 0:
+            dl = round(got * 8 / dt / 1e6, 1)
+    except Exception:
+        pass
+    try:
+        data = b"\0" * (10 * 1024 * 1024)
+        t0 = time.time()
+        req = urllib.request.Request("https://speed.cloudflare.com/__up", data=data,
+                                     headers={"User-Agent": "ProbeAgent/1.0",
+                                              "Content-Type": "application/octet-stream"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            r.read()
+        dt = time.time() - t0
+        if dt > 0:
+            ul = round(len(data) * 8 / dt / 1e6, 1)
+    except Exception:
+        pass
+    return {"download": dl, "upload": ul}
+
+
+def bench_unlock():
+    """解锁粗测：主流服务可达性（仅状态码粗判，结果供参考，非精确解锁结论）"""
+    import urllib.error
+    checks = {
+        "netflix": "https://www.netflix.com/title/80018499",
+        "chatgpt": "https://api.openai.com/v1/models",
+        "youtube": "https://www.youtube.com/premium",
+        "disney": "https://www.disneyplus.com/",
+        "tiktok": "https://www.tiktok.com/",
+    }
+    out = {}
+    for name, url in checks.items():
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0"})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                out[name] = r.status < 400
+        except urllib.error.HTTPError as e:
+            # 401/429 = 服务可达；403 多为地域/风控封锁
+            out[name] = e.code in (401, 429)
+        except Exception:
+            out[name] = False
+    return out
+
+
+def run_bench():
+    """一键体检：四项全跑，单项失败不影响其它项"""
+    result = {}
+    for key, fn in [("cpu", bench_cpu), ("disk", bench_disk), ("speed", bench_speed), ("unlock", bench_unlock)]:
+        try:
+            result[key] = fn()
+        except Exception:
+            result[key] = {}
+    return result
+
+
+def post_bench(result):
+    """体检结果回传（鉴权同上报：token + HMAC 签名）"""
+    import hmac, hashlib, time
+    ts = int(time.time())
+    sig = hmac.new(AGENT_TOKEN.encode(), str(ts).encode(), hashlib.sha256).hexdigest()
+    payload = json.dumps({"token": AGENT_TOKEN, "ts": ts, "sig": sig, "result": result}).encode()
+    req = urllib.request.Request(
+        PROBE_URL + "/api/agent/bench",
+        data=payload,
+        headers={"Content-Type": "application/json", "User-Agent": "ProbeAgent/1.0"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        print("体检结果已回传:", resp.status)
+
+
 def main():
     if "在这里填" in AGENT_TOKEN:
         print("请先编辑脚本，填入 AGENT_TOKEN")
@@ -402,6 +596,8 @@ def main():
         pass
     ts = int(time.time())
     sig = hmac.new(AGENT_TOKEN.encode(), str(ts).encode(), hashlib.sha256).hexdigest()
+    rx_mbps, tx_mbps = read_bandwidth()
+    net_rx, net_tx = read_net_totals()
     payload = json.dumps({
         "token": AGENT_TOKEN,
         "ts": ts,
@@ -411,6 +607,11 @@ def main():
         "disk": read_disk(),
         "uptime": read_uptime(),
         "load1": read_load(),
+        "rx_mbps": rx_mbps,
+        "tx_mbps": tx_mbps,
+        "net_rx": net_rx,
+        "net_tx": net_tx,
+        "host_info": read_host_info(),
         "ssh_fail": ssh_fail,
         "ssh_ips": ssh_ips,
         "ping_telecom": ping.get("telecom", 0),
@@ -462,6 +663,21 @@ def main():
                 open("/tmp/probe_ssh_threshold", "w").write(str(st))
             except Exception:
                 pass
+            # 一键体检：服务端下发任务时执行（防重入锁 10 分钟）
+            if data.get("bench_requested", 0) == 1:
+                lock = "/tmp/probe_bench.lock"
+                try:
+                    if os.path.exists(lock) and time.time() - os.path.getmtime(lock) < 600:
+                        print("体检正在进行，跳过")
+                    else:
+                        open(lock, "w").write("1")
+                        try:
+                            print("开始一键体检…")
+                            post_bench(run_bench())
+                        finally:
+                            os.remove(lock)
+                except Exception as e:
+                    print("体检失败:", e)
         except Exception as e:
             print("指令处理失败:", e)
 
