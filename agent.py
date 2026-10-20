@@ -95,8 +95,13 @@ def ping_isp():
     return result
 
 
+def _net_ifaces_skip(iface):
+    """跳过 loopback 和 Docker 虚拟网卡（veth/br-/docker 计入会把容器流量重复计数）"""
+    return iface == "lo" or iface.startswith(("veth", "docker", "br-"))
+
+
 def read_net_totals():
-    """累计流量（字节）：/proc/net/dev 全部非 lo 网卡求和，配合服务端差值算今日/本月流量"""
+    """累计流量（字节）：/proc/net/dev 物理网卡求和，配合服务端差值算今日/本月流量"""
     total_rx, total_tx = 0, 0
     try:
         with open("/proc/net/dev", errors="ignore") as f:
@@ -105,7 +110,7 @@ def read_net_totals():
                 if len(parts) < 10:
                     continue
                 iface = parts[0].rstrip(":")
-                if iface == "lo":
+                if _net_ifaces_skip(iface):
                     continue
                 total_rx += int(parts[1])
                 total_tx += int(parts[9])
@@ -266,7 +271,7 @@ def read_bandwidth():
                     if len(parts) < 10:
                         continue
                     iface = parts[0].rstrip(":")
-                    if iface in ("lo",):
+                    if _net_ifaces_skip(iface):
                         continue
                     total_rx += int(parts[1])
                     total_tx += int(parts[9])
