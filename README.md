@@ -22,6 +22,11 @@
 - 一键断网/恢复（iptables 隔离）
 - 进程存活监控
 - **SSL 证书到期检查**：在 Agent 监控里配置域名（逗号分隔，支持多个），Agent 用 openssl 检查每个域名的证书剩余天数，详情页显示列表，7 天内告警
+- **主机配置展示**：CPU 型号/核数、内存/磁盘总量、系统、虚拟化、架构，卡片与详情页可见
+- **流量统计**：实时上/下行速率 + 今日/本月流量（累计计数器差值，北京时间）
+- **历史曲线**：详情页近 24 小时 CPU/内存、三网延迟折线图
+- **🧪 一键体检**：后台下发任务，Agent 执行 CPU 跑分、磁盘顺序 IO、Cloudflare 测速、流媒体解锁粗测（Netflix/ChatGPT/YouTube/Disney+/TikTok），结果回传展示
+- **价格与到期展示**：监控可填价格文本（如 $16.93/月），详情页显示到期日与剩余天数
 
 **告警渠道（11 种，可多选）**
 - Telegram、邮件（Resend）、Webhook、钉钉、Bark、企业微信
@@ -46,7 +51,7 @@
 ### 方案 A：Turso（推荐）
 
 1. 在 [Turso](https://turso.tech) 注册并创建数据库
-2. 执行 `migrations/` 下的 SQL（按文件名顺序，001-017）：
+2. 执行 `migrations/` 下的 SQL（按文件名顺序，001-018）：
 ```bash
 # 安装 Turso CLI 后逐个执行
 for f in migrations/*.sql; do turso db shell <你的数据库名> < "$f"; done
@@ -66,7 +71,7 @@ npx wrangler deploy
 ### 方案 B：D1
 
 1. 在 Cloudflare Dashboard 创建 D1 数据库，记下 database_id
-2. 执行 `migrations/` 下的 SQL（按文件名顺序，001-017）
+2. 执行 `migrations/` 下的 SQL（按文件名顺序，001-018）
 3. 修改 `wrangler.toml` 填入你的 `database_id`
 4. 构建并部署（同上，不设置 TURSO_URL/TURSO_TOKEN 即自动用 D1）
 
@@ -76,6 +81,8 @@ npx wrangler deploy
 
 在后台监控列表点"📥 部署"，复制一键安装命令到服务器执行。Agent 为纯 Python 标准库脚本，无第三方依赖。
 
+> 升级提示：新版 Agent 增加了主机信息、流量和一键体检上报。已部署的旧 Agent 需重新下载脚本替换（注意保留原来的 Token）。
+
 ## 📁 项目结构
 
 ```
@@ -84,7 +91,7 @@ npx wrangler deploy
 │   ├── app.html     # 前端（状态页 + 管理后台，单文件）
 │   └── smtp.js      # SMTP 直发模块
 ├── agent.py         # 服务器监控脚本（纯标准库）
-├── migrations/     # 数据库迁移（001-017，Turso/SQLite 兼容）
+├── migrations/     # 数据库迁移（001-018，Turso/SQLite 兼容）
 ├── build.js         # 构建脚本（内联打包）
 └── wrangler.toml   # Workers 配置模板
 ```
@@ -109,6 +116,8 @@ Turso 免费版：每月 5 亿行读（约每天 1600 万）、1000 万行写（
 | `GET /api/monitors` | 监控列表 |
 | `GET /api/incidents` | 当前故障 |
 | `POST /api/agent/report` | Agent 上报（HMAC 签名） |
+| `GET /api/monitors/:id/agent/history` | Agent 历史曲线（降采样） |
+| `POST /api/agent/bench` | Agent 体检结果回传（HMAC 签名） |
 | `/agent.py` | Agent 脚本下载 |
 
 管理接口统一在 `/api/admin/*` 下，需 Token 鉴权。
