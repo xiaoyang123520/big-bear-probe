@@ -284,6 +284,10 @@ zh: {
   fsTitle: "🔔 飞书", fsWebhook: "群机器人 Webhook", fsWebhookPh: "群设置 → 群机器人 → 添加",
   expTitle: "⏰ 到期提醒", expDays: "提前多少天告警",
   ispPing: "三网延迟", ispPingTip: "服务器到三网 DNS 的 TCP 延迟，间接反映线路质量",
+  hostSpec: "主机配置", todayTraffic: "今日流量", monthTraffic: "本月流量", coreUnit: "核",
+  chartRes: "近 24 小时曲线", benchReport: "🧪 体检报告", benchCpu: "CPU 跑分", benchDisk: "磁盘读 / 写", benchSpeed: "下行 / 上行", benchUnlock: "流媒体解锁（粗测）", unlockNote: "连通性粗测，仅供参考",
+  priceLabel: "价格（可选，如 $16.93/月）", daysLeft: n => `剩余 ${n} 天`, expiredTxt: "已过期",
+  benchBtn: "一键体检", benchQueued: "已下发，Agent 下次上报时执行（约 1 分钟出结果）",
   ispTelecom: "电信", ispUnicom: "联通", ispMobile: "移动",
   logs: "操作日志", logTime: "时间", logAction: "操作", logDetail: "详情", noLogs: "暂无日志",
   changePw: "修改管理员密码", oldPw: "旧密码", newPw: "新密码", newPwTip: "至少 10 位", confirmPw: "确认新密码",
@@ -377,6 +381,10 @@ en: {
   fsTitle: "🔔 Feishu", fsWebhook: "Bot Webhook", fsWebhookPh: "Group settings → Add bot",
   expTitle: "⏰ Expiry Alert", expDays: "Alert days before",
   ispPing: "ISP Latency", ispPingTip: "TCP latency to China ISP DNS servers",
+  hostSpec: "Host Specs", todayTraffic: "Today", monthTraffic: "This month", coreUnit: " cores",
+  chartRes: "Last 24 hours", benchReport: "🧪 Benchmark", benchCpu: "CPU score", benchDisk: "Disk read / write", benchSpeed: "Down / Up", benchUnlock: "Streaming unlock (approx.)", unlockNote: "Reachability check, approximate only",
+  priceLabel: "Price (optional, e.g. $16.93/mo)", daysLeft: n => `${n} days left`, expiredTxt: "Expired",
+  benchBtn: "Benchmark", benchQueued: "Queued. The agent will run it on next report (~1 min)",
   ispTelecom: "Telecom", ispUnicom: "Unicom", ispMobile: "Mobile",
   logs: "Logs", logTime: "Time", logAction: "Action", logDetail: "Detail", noLogs: "No logs",
   changePw: "Change Admin Password", oldPw: "Old password", newPw: "New password", newPwTip: "At least 10 chars", confirmPw: "Confirm new password",
@@ -558,7 +566,7 @@ async function loadStatus() {
       for (const m of groups[gname]) {
         const dot = m.last_status === "up" ? "up" : m.last_status === "down" ? "down" : "unknown";
         const metaLine = m.type === "agent"
-          ? `🖥️ ${tt("server")} · ${tt("everyNMin", m.interval_minutes)}`
+          ? `🖥️ ${tt("server")} · ${tt("everyNMin", m.interval_minutes)}${m.traffic ? `<br><span>↑ ${m.traffic.tx_mbps} Mbps · ↓ ${m.traffic.rx_mbps} Mbps · ${tt("todayTraffic")} ${fmtBytes((m.traffic.today.rx || 0) + (m.traffic.today.tx || 0))}</span>` : ""}`
           : `${esc(m.target)} · ${tt("everyNMin", m.interval_minutes)}`;
         const rightSide = m.type === "agent"
           ? `<span style="color:var(--${m.last_status === "up" ? "green" : m.last_status === "down" ? "red" : "muted"});font-size:14px;font-weight:600">${m.last_status === "unknown" ? "–" : m.last_status === "up" ? "● " + tt("online") : "● " + tt("down")}</span>`
@@ -599,6 +607,25 @@ async function loadStatus() {
   } catch (e) {
     $("#app").innerHTML = `<div class="card"><div class="empty"><div class="big">⚠️</div>${tt("testFailMsg")}${esc(e.message)}</div></div>`;
   }
+}
+
+// 字节格式化
+function fmtBytes(b) {
+  if (!b || b <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.min(Math.floor(Math.log(b) / Math.log(1024)), units.length - 1);
+  return (b / Math.pow(1024, i)).toFixed(i ? 1 : 0) + " " + units[i];
+}
+
+// 简易 SVG 折线（null 点用上一个值补平）
+function sparkLine(data, color, maxV) {
+  if (!data || data.length < 2) return "";
+  let last = 0;
+  const vals = data.map(v => { if (v === null || v === undefined) return last; last = v; return v; });
+  const max = maxV || Math.max(...vals, 1);
+  const W = 260, H = 44;
+  const pts = vals.map((v, i) => `${(i / (vals.length - 1) * W).toFixed(1)},${(H - 3 - (v / max) * (H - 8)).toFixed(1)}`).join(" ");
+  return `<svg width="100%" height="${H}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="display:block"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5"/></svg>`;
 }
 
 // 响应时间曲线图
@@ -664,12 +691,56 @@ async function toggleDetail(id) {
               <div style="background:var(--border);border-radius:6px;height:10px;margin-top:4px"><div style="width:${Math.min(v, 100)}%;background:${c};height:100%;border-radius:6px;transition:width .5s"></div></div></div>`;
           };
           const fmtUptime = s => { const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600); return d > 0 ? `${d}${tt("day")}${h}${tt("hour")}` : h > 0 ? `${h}${tt("hour")}` : `${Math.floor(s / 60)}${tt("min")}`; };
+          // 主机配置 / 价格到期 / 流量（借鉴 Kokoro）
+          let hi = {}; try { hi = JSON.parse(m.host_info || "{}"); } catch (e) {}
+          const specLine = [hi.cpu_model, hi.cores ? hi.cores + tt("coreUnit") : "", hi.mem_mb ? (hi.mem_mb >= 1024 ? (hi.mem_mb / 1024).toFixed(1) + " GB" : hi.mem_mb + " MB") + " RAM" : "", hi.disk_gb ? hi.disk_gb + " GB 💾" : "", hi.os, hi.virt].filter(Boolean).join(" · ");
+          const specHtml = specLine ? `<div style="font-size:12px;color:var(--muted);margin-top:10px">💻 ${esc(specLine)}</div>` : "";
+          const daysLeftN = m.expire_at ? Math.ceil((m.expire_at - Date.now() / 1000) / 86400) : null;
+          const priceHtml = (m.price_text || m.expire_at) ? `<div style="font-size:12px;color:var(--muted);margin-top:4px">${m.price_text ? "💰 " + esc(m.price_text) : ""}${m.expire_at ? `${m.price_text ? " · " : ""}⏰ ${new Date(m.expire_at * 1000).toLocaleDateString(loc)}（${daysLeftN >= 0 ? tt("daysLeft", daysLeftN) : tt("expiredTxt")}）` : ""}</div>` : "";
+          const trafficHtml = m.traffic ? `<div style="font-size:12px;color:var(--muted);margin-top:4px">📶 ↑ ${m.traffic.tx_mbps} Mbps · ↓ ${m.traffic.rx_mbps} Mbps · ${tt("todayTraffic")} ${fmtBytes(m.traffic.today.rx + m.traffic.today.tx)} · ${tt("monthTraffic")} ${fmtBytes(m.traffic.month.rx + m.traffic.month.tx)}</div>` : "";
+          // 一键体检结果
+          let benchHtml = "";
+          try {
+            const b = JSON.parse(m.bench_result || "{}");
+            if (b && (b.cpu || b.disk || b.speed)) {
+              const un = b.unlock || {};
+              const chip = ok => ok ? "✅" : "❌";
+              benchHtml = `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+                <div style="font-size:13px;font-weight:600;margin-bottom:8px">${tt("benchReport")}${m.bench_at ? ` <span style="font-weight:400;color:var(--muted);font-size:12px">${ago(m.bench_at)}</span>` : ""}</div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;font-size:13px">
+                  ${b.cpu ? `<div>${tt("benchCpu")}<br><b style="font-size:16px">${b.cpu.score}</b></div>` : ""}
+                  ${b.disk ? `<div>${tt("benchDisk")}<br><b style="font-size:16px">${b.disk.read} / ${b.disk.write}</b> MB/s</div>` : ""}
+                  ${b.speed ? `<div>${tt("benchSpeed")}<br><b style="font-size:16px">${b.speed.download} / ${b.speed.upload}</b> Mbps</div>` : ""}
+                </div>
+                ${b.unlock ? `<div style="font-size:12px;margin-top:8px;color:var(--muted)">${tt("benchUnlock")}：Netflix ${chip(un.netflix)} · ChatGPT ${chip(un.chatgpt)} · YouTube ${chip(un.youtube)} · Disney+ ${chip(un.disney)} · TikTok ${chip(un.tiktok)}<br>${tt("unlockNote")}</div>` : ""}
+              </div>`;
+            }
+          } catch (e) {}
+          // 历史曲线（近 24 小时）
+          let chartHtml = "";
+          try {
+            const { stats: hist } = await api(`/api/monitors/${id}/agent/history?hours=24`);
+            if (hist && hist.length >= 2) {
+              chartHtml = `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+                <div style="font-size:13px;font-weight:600;margin-bottom:6px">📈 ${tt("chartRes")} · CPU / ${tt("mem")}</div>
+                ${sparkLine(hist.map(s => s.cpu), "#3b82f6", 100)}
+                ${sparkLine(hist.map(s => s.mem), "#22c55e", 100)}
+                <div style="font-size:11px;color:var(--muted)"><span style="color:#3b82f6">— CPU</span> · <span style="color:#22c55e">— ${tt("mem")}</span></div>
+                <div style="font-size:13px;font-weight:600;margin:10px 0 6px">🌐 ${tt("ispPing")}</div>
+                ${sparkLine(hist.map(s => s.ping_telecom || null), "#f59e0b")}
+                ${sparkLine(hist.map(s => s.ping_unicom || null), "#06b6d4")}
+                ${sparkLine(hist.map(s => s.ping_mobile || null), "#a855f7")}
+                <div style="font-size:11px;color:var(--muted)"><span style="color:#f59e0b">— ${tt("ispTelecom")}</span> · <span style="color:#06b6d4">— ${tt("ispUnicom")}</span> · <span style="color:#a855f7">— ${tt("ispMobile")}</span></div>
+              </div>`;
+            }
+          } catch (e) {}
           agentHtml = `<div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
             <div style="font-size:14px;font-weight:600;margin-bottom:8px">🖥️ ${tt("serverRes", stats.length)}</div>
             ${bar(latest.cpu, tt("cpu"))} ${bar(latest.mem, tt("mem"))} ${bar(latest.disk, tt("disk"))}
             <div style="display:flex;gap:16px;margin-top:10px;font-size:12px;color:var(--muted)">
               <span>${tt("load")} ${latest.load1}</span><span>${tt("uptime")} ${fmtUptime(latest.uptime)}</span><span>${tt("reported")} ${ago(latest.reported_at)}</span>
             </div>
+            ${specHtml}${priceHtml}${trafficHtml}
             ${latest.ping_telecom || latest.ping_unicom || latest.ping_mobile ? `
             <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
               <div style="font-size:13px;font-weight:600;margin-bottom:8px">🌐 ${tt("ispPing")}</div>
@@ -700,7 +771,7 @@ async function toggleDetail(id) {
                 }
                 return "";
               })()}
-            </div>` : ""}</div>`;
+            </div>` : ""}${chartHtml}${benchHtml}</div>`;
         } else {
           agentHtml = `<div style="margin-top:16px;padding:14px;background:rgba(59,130,246,.08);border:1px dashed rgba(59,130,246,.3);border-radius:8px;font-size:13px">
             📡 ${tt("waitingAgent")}<br><span style="color:var(--muted)">${tt("waitingAgentSub")}</span></div>`;
@@ -804,6 +875,8 @@ async function showDashboard() {
               ? `<button class="dd-item" onclick="toggleIsolate(${m.id},0,'${esc(m.name).replace(/'/g, "\\'")}')"><span class="dd-icon">🔌</span>${lang === "zh" ? "恢复网络" : "Restore"}</button>`
               : `<button class="dd-item dd-danger" onclick="toggleIsolate(${m.id},1,'${esc(m.name).replace(/'/g, "\\'")}')"><span class="dd-icon">⛔</span>${lang === "zh" ? "断网" : "Isolate"}</button>`) : ""}
             ${m.type === "agent" ? `<div class="dd-divider"></div>` : ""}
+            ${m.type === "agent" ? `<button class="dd-item" onclick="runBench(${m.id},'${esc(m.name).replace(/'/g, "\\'")}')"><span class="dd-icon">🧪</span>${tt("benchBtn")}</button>` : ""}
+            ${m.type === "agent" ? `<div class="dd-divider"></div>` : ""}
             ${m.type !== "agent" ? `<button class="dd-item" onclick="testMonitor(event, ${m.id})"><span class="dd-icon">🧪</span>${tt("test")}</button>` : ""}
             <button class="dd-item" onclick="editMonitor(${m.id})"><span class="dd-icon">✏️</span>${tt("edit")}</button>
             <div class="dd-divider"></div>
@@ -838,7 +911,7 @@ async function showDashboard() {
 }
 
 async function editMonitor(id) {
-  let m = { name: "", type: "http", target: "", interval_minutes: 5, group_name: "", keyword: "", expected_status: 200, enabled: 1, alert_telegram: 0, alert_email: 0, alert_webhook: 0, webhook_url: "", alert_dingtalk: 0, alert_bark: 0, alert_wecom: 0, alert_custom_email: 0, alert_smtp: 0, alert_serverchan: 0, alert_wxpusher: 0, alert_feishu: 0, ssh_threshold: 0, conn_threshold: 0, process_watch: "", ssl_domains: "", expire_at: 0 };
+  let m = { name: "", type: "http", target: "", interval_minutes: 5, group_name: "", keyword: "", expected_status: 200, enabled: 1, alert_telegram: 0, alert_email: 0, alert_webhook: 0, webhook_url: "", alert_dingtalk: 0, alert_bark: 0, alert_wecom: 0, alert_custom_email: 0, alert_smtp: 0, alert_serverchan: 0, alert_wxpusher: 0, alert_feishu: 0, ssh_threshold: 0, conn_threshold: 0, process_watch: "", ssl_domains: "", expire_at: 0, price_text: "" };
   if (id) { const { monitors } = await api("/api/admin/monitors"); m = monitors.find(x => String(x.id) === String(id)) || m; }
   window._editingMonitor = m; // 暂存，供 saveMonitor 在切换类型时保留阈值
   $("#form").innerHTML = `<div class="card"><h2>${id ? tt("editMonitor") : tt("addMonitorTitle")} ${tt("dashboard")}</h2>
@@ -855,7 +928,7 @@ async function editMonitor(id) {
     </div>
     <div class="row"><div><label>${tt("targetLabel")}</label><input id="f-target" value="${esc(m.target)}" placeholder="${tt("targetPhHttp")}"><div id="target-help" style="font-size:12px;color:var(--muted);margin-top:6px">${tt("targetHelpHttp")}</div></div>
     <div><label>${tt("groupLabel")}</label><input id="f-group" value="${esc(m.group_name || "")}" placeholder="${tt("groupPh")}"></div></div>
-    <div class="row"><div><label>${tt("expireLabel")}</label><input id="f-expire" type="date" value="${m.expire_at ? (() => { const d = new Date(m.expire_at * 1000); const p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; })() : ""}"></div><div></div></div>
+    <div class="row"><div><label>${tt("expireLabel")}</label><input id="f-expire" type="date" value="${m.expire_at ? (() => { const d = new Date(m.expire_at * 1000); const p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; })() : ""}"></div><div><label>${tt("priceLabel")}</label><input id="f-price" value="${esc(m.price_text || "")}" placeholder="$16.93/月"></div></div>
     <div class="row"><div><label>${tt("freqLabel")}</label><select id="f-interval">
       ${[[1, tt("freq1")], [5, tt("freq5")], [15, tt("freq15")], [30, tt("freq30")], [60, tt("freq60")]].map(([v, t]) => `<option value="${v}"${m.interval_minutes === v ? " selected" : ""}>${t}</option>`).join("")}
     </select></div>
@@ -935,6 +1008,7 @@ async function saveMonitor(event, id) {
     alert_dingtalk: $("#f-ding").checked, alert_bark: $("#f-bark").checked, alert_wecom: $("#f-wecom").checked, alert_custom_email: $("#f-cem").checked,
     alert_smtp: $("#f-smtp").checked, alert_serverchan: $("#f-sc").checked, alert_wxpusher: $("#f-wxp").checked, alert_feishu: $("#f-fs").checked,
     expire_at: $("#f-expire").value ? Math.floor(new Date($("#f-expire").value + "T00:00:00").getTime() / 1000) : 0,
+    price_text: $("#f-price") ? $("#f-price").value.trim() : "",
     // 非 agent 类型时输入框不存在，沿用原值而非清零
     ssh_threshold: $("#f-ssh") ? (parseInt($("#f-ssh").value, 10) || 0) : (window._editingMonitor?.ssh_threshold || 0),
     cpu_threshold: $("#f-cpu") ? (parseInt($("#f-cpu").value, 10) || 0) : (window._editingMonitor?.cpu_threshold || 0),
@@ -1123,8 +1197,8 @@ async function showLogs() {
   const { logs } = await api("/api/admin/logs");
   const loc = lang === "zh" ? "zh-CN" : "en-US";
   const actionMap = lang === "zh"
-    ? { login_ok: "✅ 登录", login_fail: "❌ 登录失败", login_blocked: "🚫 登录被锁", password_set: "🔑 设置密码", monitor_add: "➕ 添加监控", monitor_edit: "✏️ 编辑监控", monitor_del: "🗑️ 删除监控", settings_save: "⚙️ 保存设置", change_pw_ok: "🔐 修改密码", change_pw_fail: "❌ 改密码失败", net_isolate: "⛔ 一键断网", net_restore: "🔌 恢复网络", ssh_autoban: "🚫 SSH 自动封禁", visitor_toggle: "👥 访客记录开关", test_alert: "🧪 测试告警" }
-    : { login_ok: "✅ Login", login_fail: "❌ Login failed", login_blocked: "🚫 Login locked", password_set: "🔑 Password set", monitor_add: "➕ Monitor added", monitor_edit: "✏️ Monitor edited", monitor_del: "🗑️ Monitor deleted", settings_save: "⚙️ Settings saved", change_pw_ok: "🔐 Password changed", change_pw_fail: "❌ Password change failed", net_isolate: "⛔ Network isolated", net_restore: "🔌 Network restored", ssh_autoban: "🚫 SSH auto-ban", visitor_toggle: "👥 Visitor log toggled", test_alert: "🧪 Test alert" };
+    ? { login_ok: "✅ 登录", login_fail: "❌ 登录失败", login_blocked: "🚫 登录被锁", password_set: "🔑 设置密码", monitor_add: "➕ 添加监控", monitor_edit: "✏️ 编辑监控", monitor_del: "🗑️ 删除监控", settings_save: "⚙️ 保存设置", change_pw_ok: "🔐 修改密码", change_pw_fail: "❌ 改密码失败", net_isolate: "⛔ 一键断网", net_restore: "🔌 恢复网络", ssh_autoban: "🚫 SSH 自动封禁", visitor_toggle: "👥 访客记录开关", test_alert: "🧪 测试告警", bench_request: "🧪 下发体检", bench_done: "🧪 体检完成" }
+    : { login_ok: "✅ Login", login_fail: "❌ Login failed", login_blocked: "🚫 Login locked", password_set: "🔑 Password set", monitor_add: "➕ Monitor added", monitor_edit: "✏️ Monitor edited", monitor_del: "🗑️ Monitor deleted", settings_save: "⚙️ Settings saved", change_pw_ok: "🔐 Password changed", change_pw_fail: "❌ Password change failed", net_isolate: "⛔ Network isolated", net_restore: "🔌 Network restored", ssh_autoban: "🚫 SSH auto-ban", visitor_toggle: "👥 Visitor log toggled", test_alert: "🧪 Test alert", bench_request: "🧪 Benchmark queued", bench_done: "🧪 Benchmark done" };
   let rows = "";
   for (const l of logs) {
     rows += `<tr><td style="font-size:12px;white-space:nowrap">${new Date(l.created_at * 1000).toLocaleString(loc)}</td><td>${actionMap[l.action] || esc(l.action)}</td><td>${esc(l.detail)}</td><td style="font-size:12px">${esc(l.ip)}</td></tr>`;
@@ -1133,6 +1207,14 @@ async function showLogs() {
     <h2>📝 ${tt("logs")}</h2><button class="btn ghost sm" onclick="$('#form').innerHTML=''">${tt("close")}</button></div>
     <div style="overflow-x:auto"><table style="min-width:600px"><tr><th>${tt("logTime")}</th><th>${tt("logAction")}</th><th>${tt("logDetail")}</th><th>IP</th></tr>
     ${rows || `<tr><td colspan="4"><div class="empty">${tt("noLogs")}</div></td></tr>`}</table></div></div>`;
+}
+
+async function runBench(id, name) {
+  document.querySelectorAll(".dropdown-menu").forEach(x => x.style.display = "none");
+  try {
+    await api(`/api/admin/monitors/${id}/bench`, { method: "POST", body: "{}" });
+    alert("🧪 " + name + "：" + tt("benchQueued"));
+  } catch (e) { alert("Error: " + e.message); }
 }
 
 async function toggleIsolate(id, action, name) {
