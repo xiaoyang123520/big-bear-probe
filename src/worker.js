@@ -708,8 +708,16 @@ if (body.ts && body.sig) {
 const ts = now();
 const cpu = body.cpu || 0, mem = body.mem || 0, disk = body.disk || 0;
 await db.prepare(
-`INSERT INTO agent_stats (monitor_id, reported_at, cpu, mem, disk, uptime, load1, ping_telecom, ping_unicom, ping_mobile) VALUES (?,?,?,?,?,?,?,?,?,?)`
-).bind(m.id, ts, cpu, mem, disk, body.uptime || 0, body.load1 || 0, body.ping_telecom || 0, body.ping_unicom || 0, body.ping_mobile || 0).run();
+`INSERT INTO agent_stats (monitor_id, reported_at, cpu, mem, disk, uptime, load1, ping_telecom, ping_unicom, ping_mobile, rx_mbps, tx_mbps, net_rx, net_tx) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+).bind(m.id, ts, cpu, mem, disk, body.uptime || 0, body.load1 || 0, body.ping_telecom || 0, body.ping_unicom || 0, body.ping_mobile || 0, body.rx_mbps || 0, body.tx_mbps || 0, body.net_rx || 0, body.net_tx || 0).run();
+// 主机配置（CPU 型号/核数/内存/磁盘/系统等，agent 每次上报都带，覆盖存最新）
+if (body.host_info) {
+  try {
+    const hi = JSON.stringify(body.host_info);
+    await db.prepare(`UPDATE monitors SET host_info=? WHERE id=?`).bind(hi, m.id).run();
+    m.host_info = hi;
+  } catch (e) {}
+}
 // 更新最后上报时间（复用 last_check_at 字段）
 await db.prepare(`UPDATE monitors SET last_check_at=? WHERE id=?`).bind(ts, m.id).run();
 // 只保留 7 天的 agent 数据
@@ -870,8 +878,26 @@ if (typeof body.net_isolated !== "undefined") {
   }
 }
 
-// 返回断网指令 + 配置下发（agent 下次上报时执行）
-return json({ ok: true, net_blocked: m.net_blocked || 0, process_watch: m.process_watch || "", ssl_domains: m.ssl_domains || "", ssh_threshold: m.ssh_threshold || 0 });
+// 返回断网指令 + 配置下发（agent 下次上报时执行）+ 体检任务下发
+return json({ ok: true, net_blocked: m.net_blocked || 0, process_watch: m.process_watch || "", ssl_domains: m.ssl_domains || "", ssh_threshold: m.ssh_threshold || 0, bench_requested: m.bench_requested || 0 });
+}
+
+// Agent 一键体检结果回传（鉴权同 report）
+if (path === "/api/agent/bench" && method === "POST") {
+const body = await req.json().catch(() => ({}));
+const token = body.token || "";
+if (!token) return json({ error: "missing token" }, 401);
+const m = await db.prepare(`SELECT * FROM monitors WHERE agent_token=? AND type='agent'`).bind(token).first();
+if (!m) return json({ error: "invalid token" }, 401);
+if (body.ts && body.sig) {
+  const tsDiff = Math.abs(now() - parseInt(body.ts, 10));
+  if (tsDiff > 300) return json({ error: "timestamp expired" }, 401);
+  const expected = await hmacSha256(token, String(body.ts));
+  if (expected !== body.sig) return json({ error: "invalid signature" }, 401);
+}
+await db.prepare(`UPDATE monitors SET bench_result=?, bench_at=?, bench_requested=0 WHERE id=?`).bind(JSON.stringify(body.result || {}), now(), m.id).run();
+try { await adminLog(db, "bench_done", `${m.name} 完成一键体检`, "agent"); } catch (e) {}
+return json({ ok: true });
 }
 
 // 公开：计划维护（进行中 + 未来 7 天，不含已完成/已取消）
@@ -961,9 +987,30 @@ return json({ title, subtitle });
 if (path === "/api/status" && method === "GET") {
 const ts = now();
 const monitorsR = await db.prepare(
-`SELECT id, name, type, target, interval_minutes, group_name, enabled, last_check_at, last_status, last_ms, consecutive_failures, created_at, uptime_7d, avg_ms_7d, ssl_days, ssl_domain, ssl_list FROM monitors ORDER BY group_name, id`
+`SELECT id, name, type, target, interval_minutes, group_name, enabled, last_check_at, last_status, last_ms, consecutive_failures, created_at, uptime_7d, avg_ms_7d, ssl_days, ssl_domain, ssl_list, host_info, price_text, expire_at, bench_at, bench_result FROM monitors ORDER BY group_name, id`
 ).all();
 const monitors = monitorsR.results || [];
+// Agent 流量统计（今日/本月，北京时间零点起；累计计数器差值，计数器重置时取当前值兜底）
+for (const m of monitors) {
+if (m.type !== "agent") continue;
+try {
+  const lastRow = await db.prepare(`SELECT net_rx, net_tx, rx_mbps, tx_mbps FROM agent_stats WHERE monitor_id=? ORDER BY reported_at DESC LIMIT 1`).bind(m.id).first();
+  if (!lastRow) { m.traffic = null; continue; }
+  const dayStart = ts - ((ts + 28800) % 86400);
+  const dNow = new Date((ts + 28800) * 1000);
+  const monthStart = Math.floor(Date.UTC(dNow.getUTCFullYear(), dNow.getUTCMonth(), 1) / 1000) - 28800;
+  const firstOf = async (since) => db.prepare(`SELECT net_rx, net_tx FROM agent_stats WHERE monitor_id=? AND reported_at>=? ORDER BY reported_at ASC LIMIT 1`).bind(m.id, since).first();
+  const fd = await firstOf(dayStart);
+  const fm = await firstOf(monthStart);
+  const delta = (f) => {
+    if (!f) return { rx: 0, tx: 0 };
+    let rx = (lastRow.net_rx || 0) - (f.net_rx || 0); if (rx < 0) rx = lastRow.net_rx || 0;
+    let tx = (lastRow.net_tx || 0) - (f.net_tx || 0); if (tx < 0) tx = lastRow.net_tx || 0;
+    return { rx, tx };
+  };
+  m.traffic = { today: delta(fd), month: delta(fm), rx_mbps: lastRow.rx_mbps || 0, tx_mbps: lastRow.tx_mbps || 0 };
+} catch (e) { m.traffic = null; }
+}
 // 7 天统计已由 cron 预计算，直接读；只查近期检测记录（曲线图用，24 条足够）
 for (const m of monitors) {
 const ck = await db.prepare(
@@ -1000,6 +1047,19 @@ const r = await db.prepare(
 `SELECT reported_at, cpu, mem, disk, uptime, load1, ping_telecom, ping_unicom, ping_mobile FROM agent_stats WHERE monitor_id=? ORDER BY reported_at DESC LIMIT 60`
 ).bind(agentStatMatch[1]).all();
 return json({ stats: (r.results || []).reverse() });
+}
+
+// 公开：Agent 历史曲线（CPU/内存/三网延迟/速率，降采样到最多约 240 点）
+const agentHistMatch = path.match(/^\/api\/monitors\/(\d+)\/agent\/history$/);
+if (agentHistMatch && method === "GET") {
+const hours = Math.min(parseInt(url.searchParams.get("hours") || "24", 10) || 24, 168);
+const since = now() - hours * 3600;
+const cnt = await db.prepare(`SELECT COUNT(*) as c FROM agent_stats WHERE monitor_id=? AND reported_at>=?`).bind(agentHistMatch[1], since).first();
+const step = Math.max(1, Math.ceil((cnt.c || 0) / 240));
+const r = await db.prepare(
+`SELECT reported_at, cpu, mem, disk, ping_telecom, ping_unicom, ping_mobile, rx_mbps, tx_mbps FROM agent_stats WHERE monitor_id=? AND reported_at>=? AND id % ? = 0 ORDER BY reported_at ASC`
+).bind(agentHistMatch[1], since, step).all();
+return json({ stats: r.results || [] });
 }
 
 // 管理员鉴权
@@ -1156,15 +1216,15 @@ if (b.type !== "agent" && (!b.target || !String(b.target).trim())) return json({
 // agent 类型自动生成 token
 const agentToken = b.type === "agent" ? [...crypto.getRandomValues(new Uint8Array(16))].map(x => x.toString(16).padStart(2, "0")).join("") : "";
 const r = await db.prepare(
-`INSERT INTO monitors (name,type,target,interval_minutes,group_name,keyword,expected_status,enabled,alert_telegram,alert_email,alert_webhook,webhook_url,alert_dingtalk,alert_bark,alert_wecom,alert_custom_email,alert_smtp,alert_serverchan,alert_wxpusher,alert_feishu,agent_token,cpu_threshold,mem_threshold,disk_threshold,ssh_threshold,conn_threshold,process_watch,ssl_domains,expire_at,created_at)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+`INSERT INTO monitors (name,type,target,interval_minutes,group_name,keyword,expected_status,enabled,alert_telegram,alert_email,alert_webhook,webhook_url,alert_dingtalk,alert_bark,alert_wecom,alert_custom_email,alert_smtp,alert_serverchan,alert_wxpusher,alert_feishu,agent_token,cpu_threshold,mem_threshold,disk_threshold,ssh_threshold,conn_threshold,process_watch,ssl_domains,price_text,expire_at,created_at)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 ).bind(b.name, b.type || "http", b.target || "", b.interval_minutes || 5, b.group_name || "", b.keyword || "",
 b.expected_status?? 200, b.enabled?? 1, b.alert_telegram? 1: 0, b.alert_email? 1: 0,
 b.alert_webhook? 1: 0, b.webhook_url || "",
 b.alert_dingtalk? 1: 0, b.alert_bark? 1: 0, b.alert_wecom? 1: 0, b.alert_custom_email? 1: 0,
 b.alert_smtp? 1: 0, b.alert_serverchan? 1: 0, b.alert_wxpusher? 1: 0, b.alert_feishu? 1: 0,
 agentToken,
-b.cpu_threshold || 0, b.mem_threshold || 0, b.disk_threshold || 0, b.ssh_threshold || 0, b.conn_threshold || 0, b.process_watch || "", b.ssl_domains || "", b.expire_at || 0, now()).run();
+b.cpu_threshold || 0, b.mem_threshold || 0, b.disk_threshold || 0, b.ssh_threshold || 0, b.conn_threshold || 0, b.process_watch || "", b.ssl_domains || "", b.price_text || "", b.expire_at || 0, now()).run();
 await adminLog(db, "monitor_add", b.name, adminIp);
 return json({ id: r.meta.last_row_id, agent_token: agentToken || undefined });
 }
@@ -1175,12 +1235,12 @@ const b = await req.json();
 if (!b.name || !String(b.name).trim()) return json({ error: "名称不能为空" }, 400);
 if (b.type !== "agent" && (!b.target || !String(b.target).trim())) return json({ error: "目标不能为空" }, 400);
 await db.prepare(
-`UPDATE monitors SET name=?,type=?,target=?,interval_minutes=?,group_name=?,keyword=?,expected_status=?,enabled=?,alert_telegram=?,alert_email=?,alert_webhook=?,webhook_url=?,alert_dingtalk=?,alert_bark=?,alert_wecom=?,alert_custom_email=?,alert_smtp=?,alert_serverchan=?,alert_wxpusher=?,alert_feishu=?,cpu_threshold=?,mem_threshold=?,disk_threshold=?,ssh_threshold=?,conn_threshold=?,process_watch=?,ssl_domains=?,expire_at=? WHERE id=?`
+`UPDATE monitors SET name=?,type=?,target=?,interval_minutes=?,group_name=?,keyword=?,expected_status=?,enabled=?,alert_telegram=?,alert_email=?,alert_webhook=?,webhook_url=?,alert_dingtalk=?,alert_bark=?,alert_wecom=?,alert_custom_email=?,alert_smtp=?,alert_serverchan=?,alert_wxpusher=?,alert_feishu=?,cpu_threshold=?,mem_threshold=?,disk_threshold=?,ssh_threshold=?,conn_threshold=?,process_watch=?,ssl_domains=?,price_text=?,expire_at=? WHERE id=?`
 ).bind(b.name, b.type, b.target, b.interval_minutes, b.group_name || "", b.keyword || "", b.expected_status?? 200,
 b.enabled?? 1, b.alert_telegram? 1: 0, b.alert_email? 1: 0, b.alert_webhook? 1: 0,
 b.webhook_url || "", b.alert_dingtalk? 1: 0, b.alert_bark? 1: 0, b.alert_wecom? 1: 0, b.alert_custom_email? 1: 0,
 b.alert_smtp? 1: 0, b.alert_serverchan? 1: 0, b.alert_wxpusher? 1: 0, b.alert_feishu? 1: 0,
-b.cpu_threshold || 0, b.mem_threshold || 0, b.disk_threshold || 0, b.ssh_threshold || 0, b.conn_threshold || 0, b.process_watch || "", b.ssl_domains || "", b.expire_at || 0, mm[1]).run();
+b.cpu_threshold || 0, b.mem_threshold || 0, b.disk_threshold || 0, b.ssh_threshold || 0, b.conn_threshold || 0, b.process_watch || "", b.ssl_domains || "", b.price_text || "", b.expire_at || 0, mm[1]).run();
 await adminLog(db, "monitor_edit", b.name, adminIp);
 return json({ ok: true});
 }
@@ -1215,6 +1275,17 @@ if (blocked) {
   await sendAlert(db, m, `🔌 ${m.name} 已执行一键断网`, `管理员手动触发网络隔离，服务器已屏蔽所有入站连接（保留探针心跳）`);
 }
 return json({ ok: true, net_blocked: blocked });
+}
+
+// 管理：一键体检（Agent 下次上报时执行：CPU 跑分/磁盘 IO/测速/解锁检测）
+const bm = path.match(/^\/api\/admin\/monitors\/(\d+)\/bench$/);
+if (bm && method === "POST") {
+const m = await db.prepare(`SELECT * FROM monitors WHERE id=? AND type='agent'`).bind(bm[1]).first();
+if (!m) return json({ error: "仅 Agent 监控支持体检" }, 400);
+await db.prepare(`UPDATE monitors SET bench_requested=1 WHERE id=?`).bind(m.id).run();
+await adminLog(db, "bench_request", `${m.name} 触发一键体检`, adminIp);
+invalidateApiCache();
+return json({ ok: true });
 }
 
 // 管理：设置
